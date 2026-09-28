@@ -58,8 +58,8 @@ install_units() {
   if [[ "$keep_autoupdate_off" == true ]]; then
     echo "  auto-update kept off (your earlier choice via the menu switch)"
   else
-    # Default: daily auto-update is on.
-    systemctl --user enable grok-bot-update.timer
+    # Default: daily auto-update is on and running from now on.
+    systemctl --user enable --now grok-bot-update.timer
   fi
   # restart (not enable --now) so a plugin path change takes effect on an
   # already-running supervisor; first start parks Grok Bot via autohide.sh.

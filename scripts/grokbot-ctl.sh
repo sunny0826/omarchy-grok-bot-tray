@@ -132,9 +132,12 @@ cmd_toggle() {
 }
 
 cmd_autoupdate_status() {
-  # The persistent user choice for daily auto-updates is the enable state of
-  # grok-bot-update.timer — it survives reboots and plugin re-installs.
-  if systemctl --user is-enabled --quiet "$UPDATE_TIMER" 2>/dev/null; then
+  # The user choice for daily auto-updates is persisted as the enable state
+  # of grok-bot-update.timer (survives reboots and plugin re-installs). It
+  # only counts as "on" when the timer is also running — an enabled but
+  # inactive timer would silently skip the daily checks.
+  if systemctl --user is-enabled --quiet "$UPDATE_TIMER" 2>/dev/null \
+    && systemctl --user is-active --quiet "$UPDATE_TIMER" 2>/dev/null; then
     echo on
   else
     echo off
