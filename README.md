@@ -120,14 +120,18 @@ rm -rf ~/.local/state/grok-bot-tray
 - The Grok Bot application is **never modified or reverse-engineered** —
   hiding uses Hyprland special workspaces and process supervision only.
 - The updater fetches only from official endpoints
-  (`cursor.com/download/bot` → `downloads.cursor.com`), validates the archive
-  with `bsdtar`, and **verifies the SHA-256 digest before unpacking**: a
-  pinned release must match [`checksums.txt`](checksums.txt) (or an official
-  `.sha256` when the CDN ships one) or the install is refused; unpinned
-  releases are recorded to `observed-digests.txt` and announced — set
-  `GROKBOT_UPDATE_VERIFY=strict` to refuse them outright. Rollback backups
-  use unique paths (timestamp + pid), never clobbering a pre-existing
-  directory.
+  (`cursor.com/download/bot` → `downloads.cursor.com`) and validates the
+  archive with `bsdtar`. **Release integrity is fail-closed**: before
+  unpacking, the package's SHA-256 must match the pin in this repository's
+  [`checksums.txt`](checksums.txt) — a git-managed trust root that is
+  independent of the mutable download URL (same-origin companion digests are
+  deliberately not trusted). Unpinned releases are recorded to
+  `observed-digests.txt` and **refused by default**; after reviewing the
+  recorded digest, promote it with
+  `scripts/grokbot-update.sh pin <version>` and publish the file, or set
+  `GROKBOT_UPDATE_VERIFY=unpinned-ok` to opt into installing it directly.
+  Rollback backups use unique paths (timestamp + pid), never clobbering a
+  pre-existing directory.
 - `install.sh` **refuses to overwrite or remove systemd units it does not
   own**: every generated unit carries a `# Managed-by:` marker, existing
   units without it abort the install before anything is written, and
@@ -250,11 +254,14 @@ rm -rf ~/.local/state/grok-bot-tray
 - **从不修改、不逆向** Grok Bot 应用本体——隐藏仅通过 Hyprland 特殊
   workspace 与进程守护实现（不触碰应用的使用条款限制）。
 - 更新器仅访问官方源（`cursor.com/download/bot` → `downloads.cursor.com`），
-  用 `bsdtar` 校验归档，并在**解包前验证 SHA-256 摘要**：已 pin 的版本必须
-  与 [`checksums.txt`](checksums.txt) 一致（CDN 若提供官方 `.sha256` 则以
-  官方为准），否则拒绝安装；未 pin 的新版本记录到 `observed-digests.txt`
-  并桌面通知——设置 `GROKBOT_UPDATE_VERIFY=strict` 可直接拒绝。回滚备份
-  使用唯一路径（时间戳 + 进程号），绝不覆盖或删除既有目录。
+  用 `bsdtar` 校验归档。**发布完整性为 fail-closed**：解包前包的 SHA-256
+  必须与本仓库 [`checksums.txt`](checksums.txt) 中的 pin 一致——该文件由
+  git 管理、独立于可变下载 URL（同源的伴随校验文件被有意不信任）。
+  未 pin 的新版本记录到 `observed-digests.txt` 并**默认拒绝安装**；
+  人工审查记录的摘要后，用 `scripts/grokbot-update.sh pin <version>`
+  提升为 pin 并发布该文件，或显式设置
+  `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份使用唯一路径
+  （时间戳 + 进程号），绝不覆盖或删除既有目录。
 - `install.sh` **拒绝覆盖或删除不属于本插件的 systemd 单元**：每个生成的
   单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入任何内容前
   中止安装，`--uninstall` 也会跳过它们。

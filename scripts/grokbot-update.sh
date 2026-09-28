@@ -8,6 +8,9 @@ set -euo pipefail
 
 FEED_PAGE="https://cursor.com/download/bot"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Repository root (this script lives in scripts/): holds checksums.txt, the
+# trust root for release digests — independent of the download URL.
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # App install location: GROKBOT_APP_DIR wins; default to ~/.local/opt (FPM
 # extract layout), fall back to the deb's system-wide /opt path.
 APP_DIR="${GROKBOT_APP_DIR:-$HOME/.local/opt/Grok Bot}"
@@ -51,28 +54,21 @@ split_tab() {
 }
 
 verify_digest() {
-  # verify_digest <version> <pkg-path> <deb-url> — called before unpacking.
-  # Order:
-  #   1) official companion .sha256, when the CDN provides one (404 today)
-  #   2) pinned digest from checksums.txt in this repo — a mismatch refuses
-  #      the install (supply-chain protection for a mutable download URL)
-  #   3) unpinned release: record the digest for audit and notify; set
-  #      GROKBOT_UPDATE_VERIFY=strict to refuse unpinned releases outright.
-  local ver="$1" pkg="$2" base="$3" official sum pinned
+  # verify_digest <version> <pkg-path> — called before unpacking.
+  #
+  # The trust root is checksums.txt in this repository (a git-managed file,
+  # independent of the mutable download URL and its same-origin companion
+  # files). Policy is fail-closed:
+  #   - pinned release: the digest MUST match, otherwise the install is
+  #     refused (supply-chain protection)
+  #   - unpinned release: the digest is recorded to observed-digests.txt and
+  #     the install is REFUSED by default; after manual review promote it
+  #     with `grokbot-update.sh pin <version>` (or set
+  #     GROKBOT_UPDATE_VERIFY=unpinned-ok to opt into installing it directly)
+  local ver="$1" pkg="$2" sum pinned
   sum="$(sha256sum "$pkg" | awk '{print $1}')"
 
-  official="$(curl -fsSL --max-time 20 "$base.sha256" 2>/dev/null | awk 'NR==1{print $1}' || true)"
-  if [[ "$official" =~ ^[0-9a-f]{64}$ ]]; then
-    if [[ "$official" == "$sum" ]]; then
-      log "digest verified against official .sha256 ($ver)"
-      return 0
-    fi
-    log "digest MISMATCH vs official .sha256 for $ver (expected=$official got=$sum)"
-    notify "更新拒绝：$ver 与官方校验和不符"
-    return 1
-  fi
-
-  pinned="$(awk -v v="$ver" '$1==v {print $2}' "$SCRIPT_DIR/checksums.txt" 2>/dev/null || true)"
+  pinned="$(awk -v v="$ver" '$1==v {print $2}' "$PLUGIN_ROOT/checksums.txt" 2>/dev/null || true)"
   if [[ -n "$pinned" ]]; then
     if [[ "$pinned" == "$sum" ]]; then
       log "digest verified against pinned checksums.txt ($ver)"
@@ -83,15 +79,39 @@ verify_digest() {
     return 1
   fi
 
+  # Unpinned release: record for auditing, then refuse by default.
   mkdir -p "$STATE_DIR"
   echo "$ver $sum" >>"$STATE_DIR/observed-digests.txt"
-  log "warn: no pinned digest for $ver (sha256=$sum) — recorded to observed-digests.txt"
-  notify "Grok Bot $ver 暂无 pin 校验和，已记录 sha256 供审计"
-  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "strict" ]]; then
-    log "refusing $ver: GROKBOT_UPDATE_VERIFY=strict and release is unpinned"
-    return 1
+  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "unpinned-ok" ]]; then
+    log "unpinned release $ver accepted via GROKBOT_UPDATE_VERIFY=unpinned-ok (sha256=$sum)"
+    notify "Grok Bot $ver 无 pin，按 unpinned-ok 设置继续（sha256 已记录）"
+    return 0
   fi
-  return 0
+  log "refusing unpinned release $ver (sha256=$sum) — recorded to observed-digests.txt"
+  notify "Grok Bot $ver 无 pin 校验和，已拒绝安装。审查后运行 grokbot-update.sh pin $ver"
+  return 1
+}
+
+cmd_pin() {
+  # Promote a recorded digest into checksums.txt after manual review.
+  local ver="${1:-}" sum
+  if [[ -z "$ver" ]]; then
+    echo "usage: $0 pin <version>" >&2
+    exit 2
+  fi
+  if grep -qE "^$ver[[:space:]]" "$PLUGIN_ROOT/checksums.txt" 2>/dev/null; then
+    echo "$ver is already pinned in checksums.txt"
+    return 0
+  fi
+  sum="$(awk -v v="$ver" '$1==v {print $2}' "$STATE_DIR/observed-digests.txt" 2>/dev/null | tail -1)"
+  if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "no observed digest for $ver in $STATE_DIR/observed-digests.txt" >&2
+    echo "Run '$0 run' once so the digest gets recorded, review it, then retry." >&2
+    exit 1
+  fi
+  echo "$ver $sum" >>"$PLUGIN_ROOT/checksums.txt"
+  echo "pinned $ver $sum -> $PLUGIN_ROOT/checksums.txt"
+  echo "Commit the file to publish the pin for other installs of this plugin."
 }
 
 cmd_check() {
@@ -144,9 +164,9 @@ cmd_run() {
   fi
   bsdtar -tf "$pkg" >/dev/null 2>&1 || { log "package is not a valid deb"; notify "更新失败：包损坏（见 update.log）"; return 1; }
 
-  # Digest gate before anything is unpacked or swapped: a pinned release must
-  # match checksums.txt (or the official .sha256 if the CDN ever ships one).
-  verify_digest "$rv" "$pkg" "$url" || return 1
+  # Digest gate before anything is unpacked or swapped: fail-closed unless
+  # the release digest is pinned in this repository's checksums.txt.
+  verify_digest "$rv" "$pkg" || return 1
 
   # Clean previous unpack output, keep the downloaded package.
   rm -rf "$WORK/opt" "$WORK/usr" "$WORK/control.tar.xz" "$WORK/data.tar.xz" "$WORK/debian-binary"
@@ -218,5 +238,6 @@ cmd_run() {
 case "${1:-check}" in
   check) cmd_check ;;
   run) cmd_run ;;
-  *) echo "usage: $0 {check|run}" >&2; exit 2 ;;
+  pin) shift; cmd_pin "$@" ;;
+  *) echo "usage: $0 {check|run|pin <version>}" >&2; exit 2 ;;
 esac
