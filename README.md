@@ -132,10 +132,12 @@ rm -rf ~/.local/state/grok-bot-tray
   `GROKBOT_UPDATE_VERIFY=unpinned-ok` to opt into installing it directly.
   Rollback backups use unique paths (timestamp + pid), never clobbering a
   pre-existing directory.
-- `install.sh` **refuses to overwrite or remove systemd units it does not
-  own**: every generated unit carries a `# Managed-by:` marker, existing
-  units without it abort the install before anything is written, and
-  `--uninstall` skips them.
+- `install.sh` **refuses to overwrite, stop, disable, or remove systemd
+  units it does not own**: every generated unit carries a `# Managed-by:`
+  marker, existing units without it abort the install before anything is
+  written, and `--uninstall` only stops/disables/removes units that carry
+  the marker — a same-named service belonging to someone else keeps
+  running, untouched.
 - No `sudo`, no `curl | sh`, no network access other than the official
   download. `omarchy plugin add` never executes plugin code; `install.sh`
   is run explicitly by you.
@@ -262,9 +264,10 @@ rm -rf ~/.local/state/grok-bot-tray
   提升为 pin 并发布该文件，或显式设置
   `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份使用唯一路径
   （时间戳 + 进程号），绝不覆盖或删除既有目录。
-- `install.sh` **拒绝覆盖或删除不属于本插件的 systemd 单元**：每个生成的
-  单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入任何内容前
-  中止安装，`--uninstall` 也会跳过它们。
+- `install.sh` **拒绝覆盖、停止、禁用或删除不属于本插件的 systemd 单元**：
+  每个生成的单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入
+  任何内容前中止安装，`--uninstall` 也只对带标记的单元执行
+  停止/禁用/删除——他人同名服务保持运行、绝不触碰。
 - 全程无 `sudo`、无 `curl | sh`、除官方下载外无任何网络访问。
   `omarchy plugin add` 不会执行任何插件代码；`install.sh` 由你显式运行。
 

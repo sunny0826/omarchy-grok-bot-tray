@@ -73,8 +73,18 @@ EOF
 }
 
 uninstall() {
-  systemctl --user disable --now grok-bot.service grok-bot-update.timer 2>/dev/null || true
   local f target
+  # Ownership first: a unit's lifecycle may be touched only when the unit
+  # file in $UNIT_DIR belongs to this plugin. Acting on the bare unit name
+  # unconditionally would stop/disable an unrelated same-named service —
+  # even one whose unit file lives in another unit directory entirely
+  # (e.g. /usr/lib/systemd/user). `disable --now` covers the clean stop.
+  for f in grok-bot.service grok-bot-update.timer; do
+    target="$UNIT_DIR/$f"
+    if [[ -f "$target" ]] && is_managed "$target"; then
+      systemctl --user disable --now "$f" 2>/dev/null || true
+    fi
+  done
   for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
     target="$UNIT_DIR/$f"
     [[ -f "$target" ]] || continue
@@ -86,11 +96,8 @@ uninstall() {
     fi
   done
   systemctl --user daemon-reload
-  # Stop Grok Bot cleanly too (leaves the app stopped; restart it via the
-  # widget or `omarchy launch` afterwards if you keep the plugin).
-  systemctl --user stop grok-bot.service 2>/dev/null || true
   echo "Units removed. The plugin itself: omarchy plugin remove sunny0826.grok-bot-tray"
-  echo "Launcher shim restored from its newest .bak (remove it manually if unwanted)."
+  echo "Launcher shim left in place; restore from ~${SHIM#"$HOME"}.bak.* or remove it manually."
 }
 
 case "${1:-}" in
