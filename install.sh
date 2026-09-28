@@ -11,33 +11,40 @@ SHIM="$HOME/.local/bin/grok-bot"
 is_managed() {
   # A unit file belongs to this plugin when it carries our marker (new
   # installs) or points at this plugin's scripts (installs predating the
-  # marker). Anything else must never be overwritten or removed.
-  grep -qE 'Managed-by: sunny0826\.grok-bot-tray|grok-bot-tray/scripts' "$1"
+  # marker). Symlinks never count as ours: a redirect would follow them
+  # and touch an unrelated target. Anything else must never be
+  # overwritten or removed.
+  [[ -f "$1" && ! -L "$1" ]] && grep -qE 'Managed-by: sunny0826\.grok-bot-tray|grok-bot-tray/scripts' "$1"
 }
 
 install_units() {
   echo "Installing units: $PLUGIN_DIR/systemd/ -> $UNIT_DIR/"
   mkdir -p "$UNIT_DIR"
-  local f target
-  # Pass 1: refuse up front if ANY existing unit is not ours, so a late
-  # refusal can never leave a half-installed set behind.
+  local f target tmp
+  # Pass 1: refuse up front if ANY existing entry is not ours (including
+  # dangling symlinks), so a late refusal can never leave a half-installed
+  # set behind and no write ever follows a planted link.
   for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
     if [[ ! -f "$PLUGIN_DIR/systemd/$f" ]]; then
       echo "error: missing systemd/$f" >&2
       exit 1
     fi
     target="$UNIT_DIR/$f"
-    if [[ -f "$target" ]] && ! is_managed "$target"; then
+    if [[ -e "$target" || -L "$target" ]] && ! is_managed "$target"; then
       echo "error: $target exists and is not managed by this plugin" >&2
       echo "       refusing to overwrite it; inspect/remove it, then re-run" >&2
       exit 1
     fi
   done
-  # Pass 2: all clear — render every unit with an ownership marker.
+  # Pass 2: all clear — render every unit with an ownership marker. Each
+  # unit is created exclusively at an unpredictable same-directory name
+  # and renamed into place, so a redirect can never follow a link either.
   for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
     target="$UNIT_DIR/$f"
+    tmp="$(mktemp "$UNIT_DIR/.$f.XXXXXXXX")"
     { echo "# Managed-by: sunny0826.grok-bot-tray"
-      sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PLUGIN_DIR/systemd/$f"; } >"$target"
+      sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PLUGIN_DIR/systemd/$f"; } >"$tmp"
+    mv -f "$tmp" "$target"
     echo "  wrote ~${UNIT_DIR#"$HOME"}/$f"
   done
   systemctl --user daemon-reload
@@ -60,29 +67,24 @@ install_shim() {
   # ~/.local/bin/grok-bot. Plain clicks then show the window instead of
   # fighting the service for the single-instance lock; deep links still work.
   #
-  # Ownership-safe: never write through an existing symlink (that would
-  # clobber its unrelated target). Any entry that is not our own shim is
-  # moved aside intact first — links included, their targets untouched.
-  # Collision-safe: the backup name is timestamp + pid and never reused,
-  # so repeated runs can never overwrite an earlier backup.
-  local backup n=0 tmp
+  # Ownership-safe: never write through a symlink (that would clobber its
+  # unrelated target). Any entry that is not our own shim is moved aside
+  # intact first — links included, their targets untouched. Every new name
+  # is reserved with mktemp: exclusive creation at an unpredictable
+  # same-directory name, so nothing pre-planted can occupy it and repeated
+  # runs can never overwrite an earlier backup.
+  local backup tmp
   if [[ -d "$SHIM" && ! -L "$SHIM" ]]; then
     echo "error: $SHIM is a directory" >&2
     echo "       refusing to replace it; inspect/remove it, then re-run" >&2
     exit 1
   fi
   if [[ -e "$SHIM" || -L "$SHIM" ]] && ! shim_is_managed "$SHIM"; then
-    backup="$SHIM.bak.$(date +%s).$"
-    while [[ -e "$backup" || -L "$backup" ]]; do
-      n=$((n + 1))
-      backup="$SHIM.bak.$(date +%s).$.$n"
-    done
-    mv "$SHIM" "$backup"
+    backup="$(mktemp "$SHIM.bak.$(date +%s).XXXXXXXX")"
+    mv -f "$SHIM" "$backup"
     echo "Backed up existing $SHIM -> ~${backup#"$HOME"}"
   fi
-  # Write via rename: even a symlink planted in the meantime is replaced
-  # as a directory entry, never written through.
-  tmp="$SHIM.new.$"
+  tmp="$(mktemp "$SHIM.new.XXXXXXXX")"
   cat >"$tmp" <<'EOF'
 #!/usr/bin/env bash
 # Launcher shim (installed by omarchy-grok-bot-tray): plain clicks show the

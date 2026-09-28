@@ -141,9 +141,12 @@ rm -rf ~/.local/state/grok-bot-tray
 - The optional `--with-launcher` shim is written **ownership-safe and
   collision-safe**: an existing symlink is never written through (its
   target stays untouched — the link itself is moved aside intact), a
-  directory at the path aborts the install, and any previous launcher is
-  moved to a unique `~/.local/bin/grok-bot.bak.<timestamp>.<pid>`
-  backup whose name is never reused.
+  directory at the path aborts the install, and every new name is
+  reserved with `mktemp` — exclusive creation at an unpredictable
+  same-directory name before being renamed into place. The previous
+  launcher moves to a unique `~/.local/bin/grok-bot.bak.<timestamp>.<id>`
+  backup whose name is never reused. Unit files are written through the
+  same exclusive-create-and-rename path.
 - No `sudo`, no `curl | sh`, no network access other than the official
   download. `omarchy plugin add` never executes plugin code; `install.sh`
   is run explicitly by you.
@@ -276,8 +279,10 @@ rm -rf ~/.local/state/grok-bot-tray
   停止/禁用/删除——他人同名服务保持运行、绝不触碰。
 - 可选的 `--with-launcher` shim 以**所有权安全、防冲突**的方式写入：
   绝不写穿已有的符号链接（其目标原封不动，链接本身被完整移开保存）；
-  路径上若是目录则中止安装；原有启动器被移动到唯一的
-  `~/.local/bin/grok-bot.bak.<时间戳>.<进程号>` 备份，备份名绝不复用。
+  路径上若是目录则中止安装；所有新文件名均用 `mktemp` 预留——先在
+  同目录以不可预测的名字排他创建，再重命名就位。原有启动器被移动到
+  唯一的 `~/.local/bin/grok-bot.bak.<时间戳>.<随机串>` 备份，备份名
+  绝不复用。systemd 单元文件也通过同样的排他创建 + 重命名方式写入。
 - 全程无 `sudo`、无 `curl | sh`、除官方下载外无任何网络访问。
   `omarchy plugin add` 不会执行任何插件代码；`install.sh` 由你显式运行。
 
