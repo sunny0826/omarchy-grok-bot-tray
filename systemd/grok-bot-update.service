@@ -1,0 +1,6 @@
+[Unit]
+Description=Check and install Grok Bot updates (app has no Linux updater)
+
+[Service]
+Type=oneshot
+ExecStart=@PLUGIN_DIR@/scripts/grokbot-update.sh run
