@@ -20,7 +20,14 @@ is_managed() {
 install_units() {
   echo "Installing units: $PLUGIN_DIR/systemd/ -> $UNIT_DIR/"
   mkdir -p "$UNIT_DIR"
-  local f target tmp
+  local f target tmp keep_autoupdate_off=false
+  # Respect an earlier user choice: if our update timer already exists and is
+  # disabled, a re-install keeps daily auto-updates off (the menu switch is
+  # the user's control) instead of re-enabling the default.
+  if [[ -f "$UNIT_DIR/grok-bot-update.timer" ]] && is_managed "$UNIT_DIR/grok-bot-update.timer" \
+    && ! systemctl --user is-enabled --quiet grok-bot-update.timer 2>/dev/null; then
+    keep_autoupdate_off=true
+  fi
   # Pass 1: refuse up front if ANY existing entry is not ours (including
   # dangling symlinks), so a late refusal can never leave a half-installed
   # set behind and no write ever follows a planted link.
@@ -48,12 +55,21 @@ install_units() {
     echo "  wrote ~${UNIT_DIR#"$HOME"}/$f"
   done
   systemctl --user daemon-reload
-  systemctl --user enable grok-bot-update.timer
+  if [[ "$keep_autoupdate_off" == true ]]; then
+    echo "  auto-update kept off (your earlier choice via the menu switch)"
+  else
+    # Default: daily auto-update is on.
+    systemctl --user enable grok-bot-update.timer
+  fi
   # restart (not enable --now) so a plugin path change takes effect on an
   # already-running supervisor; first start parks Grok Bot via autohide.sh.
   systemctl --user enable grok-bot.service
   systemctl --user restart grok-bot.service
-  echo "Enabled: grok-bot.service (supervisor) + grok-bot-update.timer (daily)"
+  if [[ "$keep_autoupdate_off" == true ]]; then
+    echo "Enabled: grok-bot.service (supervisor); auto-update: off (kept your choice)"
+  else
+    echo "Enabled: grok-bot.service (supervisor) + grok-bot-update.timer (daily)"
+  fi
 }
 
 shim_is_managed() {

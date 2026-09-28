@@ -12,6 +12,8 @@ BarWidget {
   readonly property string updatePath: Qt.resolvedUrl("scripts/grokbot-update.sh").toString().replace("file://", "")
   // starting | stopped | running-visible | running-hidden (from grokbot-ctl.sh)
   property string botState: "stopped"
+  // on | off — the daily auto-update switch (grokbot-update.timer enable state)
+  property string autoUpdateState: "on"
 
   readonly property bool running: botState === "running-visible" || botState === "running-hidden"
 
@@ -31,6 +33,13 @@ BarWidget {
     Quickshell.execDetached([updatePath, "run"])
   }
 
+  // The auto-update choice persists as grok-bot-update.timer's enable state
+  // (see grokbot-ctl.sh); re-read it after the detached toggle has landed.
+  function runAutoupdateToggle() {
+    Quickshell.execDetached([ctlPath, "autoupdate-toggle"])
+    autoRefreshTimer.restart()
+  }
+
   Process {
     id: statusProc
     command: [root.ctlPath, "status"]
@@ -38,6 +47,22 @@ BarWidget {
     stdout: StdioCollector {
       onStreamFinished: root.botState = text.trim()
     }
+  }
+
+  Process {
+    id: autoupdateProc
+    command: [root.ctlPath, "autoupdate-status"]
+
+    stdout: StdioCollector {
+      onStreamFinished: root.autoUpdateState = text.trim()
+    }
+  }
+
+  Timer {
+    id: autoRefreshTimer
+    interval: 700
+    repeat: false
+    onTriggered: autoupdateProc.running = true
   }
 
   Timer {
@@ -100,6 +125,9 @@ BarWidget {
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         menu.open = !menu.open;
+        if (menu.open) {
+          autoupdateProc.running = true;
+        }
       } else {
         root.run("toggle");
       }
@@ -182,6 +210,67 @@ BarWidget {
           onTapped: {
             menu.open = false;
             root.runUpdate();
+          }
+        }
+      }
+
+      // Row: daily auto-update switch (controls grok-bot-update.timer; the
+      // choice is persistent and defaults to on)
+      Rectangle {
+        id: autoupdateRow
+        width: menuColumn.width
+        height: Style.spacing.controlHeight
+        radius: Style.cornerRadius
+        color: "transparent"
+        border.width: autoupdateHover.hovered ? 1 : 0
+        border.color: Color.popups.border
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(8)
+          text: "Auto update"
+          color: Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+        }
+
+        // Switch: accent-filled track with the knob right = on,
+        // dimmed track with the knob left = off.
+        Rectangle {
+          id: autoupdateTrack
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(8)
+          width: Style.space(34)
+          height: Style.space(18)
+          radius: height / 2
+          color: root.autoUpdateState === "on" ? Color.accent : Color.popups.border
+
+          Rectangle {
+            width: parent.height - 4
+            height: width
+            radius: width / 2
+            color: Color.popups.text
+            anchors.verticalCenter: parent.verticalCenter
+            x: root.autoUpdateState === "on" ? parent.width - width - 2 : 2
+
+            Behavior on x {
+              NumberAnimation {
+                duration: 120
+              }
+            }
+          }
+        }
+
+        HoverHandler {
+          id: autoupdateHover
+        }
+
+        TapHandler {
+          acceptedButtons: Qt.LeftButton
+          onTapped: {
+            root.runAutoupdateToggle();
           }
         }
       }

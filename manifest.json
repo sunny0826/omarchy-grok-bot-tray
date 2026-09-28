@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "sunny0826.grok-bot-tray",
   "name": "Grok Bot Tray",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "sunny0826",
   "license": "MIT",
-  "description": "Keep Grok Bot online: click the bar icon to hide/show its window in a tray workspace, right-click to quit. Paired with the grok-bot.service systemd unit for crash supervision.",
+  "description": "Keep Grok Bot online: click the bar icon to hide/show its window in a tray workspace, right-click for a menu (auto-update switch, quit). Paired with the grok-bot.service systemd unit for crash supervision.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "GrokBotTray.qml"

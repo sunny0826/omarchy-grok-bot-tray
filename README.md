@@ -21,12 +21,15 @@ Linux (the app itself reports "this platform does not support updates").
   keeps running behind an icon in the status bar.
 - **Bar widget** (Grok Bot logo + accent badge):
   - **Left click** — show the window / hide it into the tray workspace
-  - **Right click** — menu: Show/Hide, Check for updates, Quit
+  - **Right click** — menu: Show/Hide, Check for updates, Auto update switch, Quit
 - **Crash supervision** — a systemd user service restarts Grok Bot on crash or
   `kill -9`, and starts it hidden at login.
 - **Daily auto-updater** — parses the official download page, downloads the
   latest `.deb`, unpacks it with `bsdtar`, swaps the install with rollback,
-  verifies the new build boots, and notifies you of the result.
+  verifies the new build boots, and notifies you of the result. The
+  right-click menu has an **Auto update switch** (on by default) — turn it
+  off and daily updates stop; your choice persists across reboots and
+  plugin re-installs.
 - **Zero patching** — the Grok Bot application itself is never modified.
 
 ### How it works
@@ -72,6 +75,7 @@ bash .../install.sh --uninstall       # remove the systemd units
 | Close the window (X) | Process exits → supervisor relaunches in ~2 s → window parks in the tray (≈ minimize to tray) |
 | Left click on bar icon | In tray → show + focus; visible → hide; not running → start |
 | Right click → Check for updates | Update now, result via desktop notification |
+| Right click → Auto update | Toggle daily auto-updates (default: on; the choice persists across reboots and re-installs) |
 | Right click → Quit Grok Bot | Real exit (service stopped, no respawn) |
 | Crash / `kill -9` | Automatic restart + hide |
 | Daily timer (early morning, randomized) | Check for updates, install silently, notify |
@@ -170,11 +174,13 @@ rm -rf ~/.local/state/grok-bot-tray
   特殊 workspace（`special:grok-tray`），agent 在 bar 图标后持续在线。
 - **bar 插件**（Grok Bot logo + accent 角标）：
   - **左键** — 显示窗口 / 藏入托盘 workspace
-  - **右键** — 菜单：显示/隐藏、检查更新、退出
+  - **右键** — 菜单：显示/隐藏、检查更新、自动更新开关、退出
 - **崩溃守护** — systemd 用户服务在崩溃或 `kill -9` 后自动重启 Grok Bot，
   并在登录时自启隐藏。
 - **每日自动更新** — 解析官方下载页，下载最新 `.deb`，`bsdtar` 解包，
-  带回滚的换位安装，验证新版本能启动，结果桌面通知。
+  带回滚的换位安装，验证新版本能启动，结果桌面通知。右键菜单提供
+  **自动更新开关**（默认开启）——关闭后每日更新停止，选择跨重启与
+  插件重装持久保留。
 - **零侵入** — 从不修改 Grok Bot 应用本体。
 
 ### 工作原理
@@ -220,6 +226,7 @@ bash .../install.sh --uninstall       # 卸载 systemd 单元
 | 点窗口 X | 进程退出 → 约 2s 被守护拉起 → 窗口自动入托盘（≈ 最小化到托盘） |
 | bar 左键 | 在托盘→显示并聚焦；可见→隐藏；未运行→启动 |
 | bar 右键 → 检查更新 | 立即检查安装，结果桌面通知 |
+| bar 右键 → 自动更新 | 每日自动更新开关（默认开启；选择跨重启与重装持久保留） |
 | bar 右键 → 退出 Grok Bot | 真退出（服务停止，不复活） |
 | 崩溃 / `kill -9` | 自动重启并隐藏 |
 | 每日 timer（凌晨随机时段） | 检查更新、静默安装、发通知 |

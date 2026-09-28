@@ -7,6 +7,7 @@ set -euo pipefail
 WIN_CLASS="${GROKBOT_WIN_CLASS:-grok-bot}"   # window class == binary name
 TRAY_WS="special:grok-tray"
 UNIT="grok-bot.service"
+UPDATE_TIMER="grok-bot-update.timer"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/grok-bot-tray"
 LAST_WS_FILE="$STATE_DIR/last-ws"
 
@@ -130,6 +131,26 @@ cmd_toggle() {
   esac
 }
 
+cmd_autoupdate_status() {
+  # The persistent user choice for daily auto-updates is the enable state of
+  # grok-bot-update.timer — it survives reboots and plugin re-installs.
+  if systemctl --user is-enabled --quiet "$UPDATE_TIMER" 2>/dev/null; then
+    echo on
+  else
+    echo off
+  fi
+}
+
+cmd_autoupdate_toggle() {
+  if [[ "$(cmd_autoupdate_status)" == "on" ]]; then
+    systemctl --user disable --now "$UPDATE_TIMER" 2>/dev/null || true
+    echo "auto-update off"
+  else
+    systemctl --user enable --now "$UPDATE_TIMER"
+    echo "auto-update on"
+  fi
+}
+
 case "${1:-}" in
   status) cmd_status ;;
   hide) cmd_hide ;;
@@ -138,5 +159,7 @@ case "${1:-}" in
   open) cmd_open ;;
   quit) cmd_quit ;;
   toggle) cmd_toggle ;;
-  *) echo "usage: $0 {status|toggle|show|hide|start|open|quit}" >&2; exit 2 ;;
+  autoupdate-status) cmd_autoupdate_status ;;
+  autoupdate-toggle) cmd_autoupdate_toggle ;;
+  *) echo "usage: $0 {status|toggle|show|hide|start|open|quit|autoupdate-status|autoupdate-toggle}" >&2; exit 2 ;;
 esac
