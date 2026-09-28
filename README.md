@@ -121,11 +121,20 @@ rm -rf ~/.local/state/grok-bot-tray
   hiding uses Hyprland special workspaces and process supervision only.
 - The updater fetches only from official endpoints
   (`cursor.com/download/bot` → `downloads.cursor.com`), validates the archive
-  with `bsdtar`, verifies the extracted version against the requested one,
-  and keeps the previous install as an automatic rollback. No `sudo`, no
-  `curl | sh`, no network access other than the official download.
-- `omarchy plugin add` never executes plugin code; `install.sh` is run
-  explicitly by you.
+  with `bsdtar`, and **verifies the SHA-256 digest before unpacking**: a
+  pinned release must match [`checksums.txt`](checksums.txt) (or an official
+  `.sha256` when the CDN ships one) or the install is refused; unpinned
+  releases are recorded to `observed-digests.txt` and announced — set
+  `GROKBOT_UPDATE_VERIFY=strict` to refuse them outright. Rollback backups
+  use unique paths (timestamp + pid), never clobbering a pre-existing
+  directory.
+- `install.sh` **refuses to overwrite or remove systemd units it does not
+  own**: every generated unit carries a `# Managed-by:` marker, existing
+  units without it abort the install before anything is written, and
+  `--uninstall` skips them.
+- No `sudo`, no `curl | sh`, no network access other than the official
+  download. `omarchy plugin add` never executes plugin code; `install.sh`
+  is run explicitly by you.
 
 ### License & asset attribution
 
@@ -241,9 +250,16 @@ rm -rf ~/.local/state/grok-bot-tray
 - **从不修改、不逆向** Grok Bot 应用本体——隐藏仅通过 Hyprland 特殊
   workspace 与进程守护实现（不触碰应用的使用条款限制）。
 - 更新器仅访问官方源（`cursor.com/download/bot` → `downloads.cursor.com`），
-  用 `bsdtar` 校验归档、核对解出的版本号，旧版本保留为自动回滚点。
-  全程无 `sudo`、无 `curl | sh`、除官方下载外无任何网络访问。
-- `omarchy plugin add` 不会执行任何插件代码；`install.sh` 由你显式运行。
+  用 `bsdtar` 校验归档，并在**解包前验证 SHA-256 摘要**：已 pin 的版本必须
+  与 [`checksums.txt`](checksums.txt) 一致（CDN 若提供官方 `.sha256` 则以
+  官方为准），否则拒绝安装；未 pin 的新版本记录到 `observed-digests.txt`
+  并桌面通知——设置 `GROKBOT_UPDATE_VERIFY=strict` 可直接拒绝。回滚备份
+  使用唯一路径（时间戳 + 进程号），绝不覆盖或删除既有目录。
+- `install.sh` **拒绝覆盖或删除不属于本插件的 systemd 单元**：每个生成的
+  单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入任何内容前
+  中止安装，`--uninstall` 也会跳过它们。
+- 全程无 `sudo`、无 `curl | sh`、除官方下载外无任何网络访问。
+  `omarchy plugin add` 不会执行任何插件代码；`install.sh` 由你显式运行。
 
 ### 许可与素材归属
 

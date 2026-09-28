@@ -8,16 +8,36 @@ PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 UNIT_DIR="$HOME/.config/systemd/user"
 SHIM="$HOME/.local/bin/grok-bot"
 
+is_managed() {
+  # A unit file belongs to this plugin when it carries our marker (new
+  # installs) or points at this plugin's scripts (installs predating the
+  # marker). Anything else must never be overwritten or removed.
+  grep -qE 'Managed-by: sunny0826\.grok-bot-tray|grok-bot-tray/scripts' "$1"
+}
+
 install_units() {
   echo "Installing units: $PLUGIN_DIR/systemd/ -> $UNIT_DIR/"
   mkdir -p "$UNIT_DIR"
-  local f
+  local f target
+  # Pass 1: refuse up front if ANY existing unit is not ours, so a late
+  # refusal can never leave a half-installed set behind.
   for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
     if [[ ! -f "$PLUGIN_DIR/systemd/$f" ]]; then
       echo "error: missing systemd/$f" >&2
       exit 1
     fi
-    sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PLUGIN_DIR/systemd/$f" >"$UNIT_DIR/$f"
+    target="$UNIT_DIR/$f"
+    if [[ -f "$target" ]] && ! is_managed "$target"; then
+      echo "error: $target exists and is not managed by this plugin" >&2
+      echo "       refusing to overwrite it; inspect/remove it, then re-run" >&2
+      exit 1
+    fi
+  done
+  # Pass 2: all clear — render every unit with an ownership marker.
+  for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
+    target="$UNIT_DIR/$f"
+    { echo "# Managed-by: sunny0826.grok-bot-tray"
+      sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PLUGIN_DIR/systemd/$f"; } >"$target"
     echo "  wrote ~${UNIT_DIR#"$HOME"}/$f"
   done
   systemctl --user daemon-reload
@@ -54,7 +74,17 @@ EOF
 
 uninstall() {
   systemctl --user disable --now grok-bot.service grok-bot-update.timer 2>/dev/null || true
-  rm -f "$UNIT_DIR/grok-bot.service" "$UNIT_DIR/grok-bot-update.service" "$UNIT_DIR/grok-bot-update.timer"
+  local f target
+  for f in grok-bot.service grok-bot-update.service grok-bot-update.timer; do
+    target="$UNIT_DIR/$f"
+    [[ -f "$target" ]] || continue
+    if is_managed "$target"; then
+      rm -f "$target"
+      echo "  removed ~${UNIT_DIR#"$HOME"}/$f"
+    else
+      echo "  skipped $target (not managed by this plugin)"
+    fi
+  done
   systemctl --user daemon-reload
   # Stop Grok Bot cleanly too (leaves the app stopped; restart it via the
   # widget or `omarchy launch` afterwards if you keep the plugin).

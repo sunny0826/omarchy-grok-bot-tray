@@ -50,6 +50,50 @@ split_tab() {
   REPLY_URL="${1#*$'\t'}"
 }
 
+verify_digest() {
+  # verify_digest <version> <pkg-path> <deb-url> — called before unpacking.
+  # Order:
+  #   1) official companion .sha256, when the CDN provides one (404 today)
+  #   2) pinned digest from checksums.txt in this repo — a mismatch refuses
+  #      the install (supply-chain protection for a mutable download URL)
+  #   3) unpinned release: record the digest for audit and notify; set
+  #      GROKBOT_UPDATE_VERIFY=strict to refuse unpinned releases outright.
+  local ver="$1" pkg="$2" base="$3" official sum pinned
+  sum="$(sha256sum "$pkg" | awk '{print $1}')"
+
+  official="$(curl -fsSL --max-time 20 "$base.sha256" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+  if [[ "$official" =~ ^[0-9a-f]{64}$ ]]; then
+    if [[ "$official" == "$sum" ]]; then
+      log "digest verified against official .sha256 ($ver)"
+      return 0
+    fi
+    log "digest MISMATCH vs official .sha256 for $ver (expected=$official got=$sum)"
+    notify "更新拒绝：$ver 与官方校验和不符"
+    return 1
+  fi
+
+  pinned="$(awk -v v="$ver" '$1==v {print $2}' "$SCRIPT_DIR/checksums.txt" 2>/dev/null || true)"
+  if [[ -n "$pinned" ]]; then
+    if [[ "$pinned" == "$sum" ]]; then
+      log "digest verified against pinned checksums.txt ($ver)"
+      return 0
+    fi
+    log "digest MISMATCH vs pinned checksums.txt for $ver (expected=$pinned got=$sum)"
+    notify "更新拒绝：$ver 校验和与仓库 pin 不符（疑似篡改）"
+    return 1
+  fi
+
+  mkdir -p "$STATE_DIR"
+  echo "$ver $sum" >>"$STATE_DIR/observed-digests.txt"
+  log "warn: no pinned digest for $ver (sha256=$sum) — recorded to observed-digests.txt"
+  notify "Grok Bot $ver 暂无 pin 校验和，已记录 sha256 供审计"
+  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "strict" ]]; then
+    log "refusing $ver: GROKBOT_UPDATE_VERIFY=strict and release is unpinned"
+    return 1
+  fi
+  return 0
+}
+
 cmd_check() {
   local lv info
   lv="$(local_version)"
@@ -100,6 +144,10 @@ cmd_run() {
   fi
   bsdtar -tf "$pkg" >/dev/null 2>&1 || { log "package is not a valid deb"; notify "更新失败：包损坏（见 update.log）"; return 1; }
 
+  # Digest gate before anything is unpacked or swapped: a pinned release must
+  # match checksums.txt (or the official .sha256 if the CDN ever ships one).
+  verify_digest "$rv" "$pkg" "$url" || return 1
+
   # Clean previous unpack output, keep the downloaded package.
   rm -rf "$WORK/opt" "$WORK/usr" "$WORK/control.tar.xz" "$WORK/data.tar.xz" "$WORK/debian-binary"
   ( cd "$WORK" && bsdtar -xf pkg.deb && data="$(ls data.tar.* 2>/dev/null | head -1)" && [ -n "$data" ] && bsdtar -xf "$data" ) \
@@ -123,10 +171,14 @@ cmd_run() {
   fi
   [[ -n "$new_ver" ]] || log "warn: changelog missing in package, trusting URL version $rv"
 
-  # Swap: stop cleanly, keep the old tree as rollback, move new in.
+  # Swap: stop cleanly, keep the old tree as rollback, move new in. The backup
+  # path is unique (timestamp + pid) so a pre-existing directory with a
+  # similar name is never deleted.
   "$CTL" quit || true
-  backup="$APP_DIR.bak-$lv"
-  rm -rf "$backup"
+  backup="$APP_DIR.bak-$lv.$(date +%s).$$"
+  if [[ -n "$backup" && "$backup" != "$APP_DIR" ]]; then
+    rm -rf "$backup"
+  fi
   mv "$APP_DIR" "$backup" || { log "swap: mv old install failed"; "$CTL" start || true; return 1; }
   cp -f "$doc_changelog" "$new_dir/changelog.gz" 2>/dev/null || true
   mv "$new_dir" "$APP_DIR" || {
