@@ -49,15 +49,41 @@ install_units() {
   echo "Enabled: grok-bot.service (supervisor) + grok-bot-update.timer (daily)"
 }
 
+shim_is_managed() {
+  # The shim we install carries this marker. A symlink never counts as
+  # ours: a plain redirect would follow it and overwrite its target.
+  [[ -f "$1" && ! -L "$1" ]] && grep -q 'installed by omarchy-grok-bot-tray' "$1"
+}
+
 install_shim() {
   # Optional: only useful when your Grok Bot .desktop points at
   # ~/.local/bin/grok-bot. Plain clicks then show the window instead of
   # fighting the service for the single-instance lock; deep links still work.
-  if [[ -f "$SHIM" ]]; then
-    cp "$SHIM" "$SHIM.bak.$(date +%s)"
-    echo "Backed up existing $SHIM"
+  #
+  # Ownership-safe: never write through an existing symlink (that would
+  # clobber its unrelated target). Any entry that is not our own shim is
+  # moved aside intact first — links included, their targets untouched.
+  # Collision-safe: the backup name is timestamp + pid and never reused,
+  # so repeated runs can never overwrite an earlier backup.
+  local backup n=0 tmp
+  if [[ -d "$SHIM" && ! -L "$SHIM" ]]; then
+    echo "error: $SHIM is a directory" >&2
+    echo "       refusing to replace it; inspect/remove it, then re-run" >&2
+    exit 1
   fi
-  cat >"$SHIM" <<'EOF'
+  if [[ -e "$SHIM" || -L "$SHIM" ]] && ! shim_is_managed "$SHIM"; then
+    backup="$SHIM.bak.$(date +%s).$"
+    while [[ -e "$backup" || -L "$backup" ]]; do
+      n=$((n + 1))
+      backup="$SHIM.bak.$(date +%s).$.$n"
+    done
+    mv "$SHIM" "$backup"
+    echo "Backed up existing $SHIM -> ~${backup#"$HOME"}"
+  fi
+  # Write via rename: even a symlink planted in the meantime is replaced
+  # as a directory entry, never written through.
+  tmp="$SHIM.new.$"
+  cat >"$tmp" <<'EOF'
 #!/usr/bin/env bash
 # Launcher shim (installed by omarchy-grok-bot-tray): plain clicks show the
 # window; calls with arguments (deep links) forward to the real binary.
@@ -68,7 +94,8 @@ if [[ $# -gt 0 ]]; then
 fi
 exec "$HOME/.config/omarchy/plugins/sunny0826.grok-bot-tray/scripts/grokbot-ctl.sh" open
 EOF
-  chmod +x "$SHIM"
+  chmod +x "$tmp"
+  mv -f "$tmp" "$SHIM"
   echo "Installed launcher shim at $SHIM"
 }
 

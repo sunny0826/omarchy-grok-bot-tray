@@ -138,6 +138,12 @@ rm -rf ~/.local/state/grok-bot-tray
   written, and `--uninstall` only stops/disables/removes units that carry
   the marker — a same-named service belonging to someone else keeps
   running, untouched.
+- The optional `--with-launcher` shim is written **ownership-safe and
+  collision-safe**: an existing symlink is never written through (its
+  target stays untouched — the link itself is moved aside intact), a
+  directory at the path aborts the install, and any previous launcher is
+  moved to a unique `~/.local/bin/grok-bot.bak.<timestamp>.<pid>`
+  backup whose name is never reused.
 - No `sudo`, no `curl | sh`, no network access other than the official
   download. `omarchy plugin add` never executes plugin code; `install.sh`
   is run explicitly by you.
@@ -268,6 +274,10 @@ rm -rf ~/.local/state/grok-bot-tray
   每个生成的单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入
   任何内容前中止安装，`--uninstall` 也只对带标记的单元执行
   停止/禁用/删除——他人同名服务保持运行、绝不触碰。
+- 可选的 `--with-launcher` shim 以**所有权安全、防冲突**的方式写入：
+  绝不写穿已有的符号链接（其目标原封不动，链接本身被完整移开保存）；
+  路径上若是目录则中止安装；原有启动器被移动到唯一的
+  `~/.local/bin/grok-bot.bak.<时间戳>.<进程号>` 备份，备份名绝不复用。
 - 全程无 `sudo`、无 `curl | sh`、除官方下载外无任何网络访问。
   `omarchy plugin add` 不会执行任何插件代码；`install.sh` 由你显式运行。
 
