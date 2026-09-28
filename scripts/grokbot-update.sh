@@ -20,6 +20,10 @@ WORK="$STATE_DIR/update-work"
 LOG="$STATE_DIR/update.log"
 CTL="$SCRIPT_DIR/grokbot-ctl.sh"
 
+# The state dir must exist before the first log line — on a fresh install
+# it does not yet, and a failed log write would abort the whole updater.
+mkdir -p "$STATE_DIR"
+
 log() { echo "[$(date '+%F %T')] $*" >>"$LOG"; }
 notify() { notify-send "Grok Bot Update" "$1" 2>/dev/null || true; }
 
@@ -191,19 +195,24 @@ cmd_run() {
   fi
   [[ -n "$new_ver" ]] || log "warn: changelog missing in package, trusting URL version $rv"
 
-  # Swap: stop cleanly, keep the old tree as rollback, move new in. The backup
-  # path is unique (timestamp + pid) so a pre-existing directory with a
-  # similar name is never deleted.
+  # Swap: stop cleanly, keep the old tree as rollback, move new in. The
+  # backup name is reserved first with mktemp (exclusive creation of an
+  # unpredictable same-directory name), so nothing that already occupies
+  # any name is ever deleted or overwritten; `mv -T` then renames the old
+  # tree over the reserved placeholder in one step — it can neither land
+  # inside some other directory nor follow a planted link.
   "$CTL" quit || true
-  backup="$APP_DIR.bak-$lv.$(date +%s).$$"
-  if [[ -n "$backup" && "$backup" != "$APP_DIR" ]]; then
-    rm -rf "$backup"
-  fi
-  mv "$APP_DIR" "$backup" || { log "swap: mv old install failed"; "$CTL" start || true; return 1; }
+  backup="$(mktemp -d "$APP_DIR.bak-$lv.XXXXXXXXXX")"
+  mv -T "$APP_DIR" "$backup" || {
+    rmdir "$backup" 2>/dev/null || true
+    log "swap: mv old install failed"
+    "$CTL" start || true
+    return 1
+  }
   cp -f "$doc_changelog" "$new_dir/changelog.gz" 2>/dev/null || true
-  mv "$new_dir" "$APP_DIR" || {
+  mv -T "$new_dir" "$APP_DIR" || {
     log "swap: mv new install failed"
-    mv "$backup" "$APP_DIR" || true
+    mv -T "$backup" "$APP_DIR" || true
     "$CTL" start || true
     notify "更新失败：换位出错，已恢复原版本"
     return 1
@@ -229,7 +238,7 @@ cmd_run() {
   log "new build failed to start (status=$status) — rolling back to $lv"
   "$CTL" quit || true
   rm -rf "$APP_DIR"
-  mv "$backup" "$APP_DIR"
+  mv -T "$backup" "$APP_DIR"
   "$CTL" start || true
   notify "更新 $rv 失败，已回滚到 $lv（见 update.log）"
   return 1

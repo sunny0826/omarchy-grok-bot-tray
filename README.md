@@ -130,8 +130,9 @@ rm -rf ~/.local/state/grok-bot-tray
   recorded digest, promote it with
   `scripts/grokbot-update.sh pin <version>` and publish the file, or set
   `GROKBOT_UPDATE_VERIFY=unpinned-ok` to opt into installing it directly.
-  Rollback backups use unique paths (timestamp + pid), never clobbering a
-  pre-existing directory.
+  Rollback backup names are reserved with `mktemp` — exclusive creation
+  of an unpredictable same-directory name — so a pre-existing user
+  directory or symlink at any name is never deleted or overwritten.
 - `install.sh` **refuses to overwrite, stop, disable, or remove systemd
   units it does not own**: every generated unit carries a `# Managed-by:`
   marker, existing units without it abort the install before anything is
@@ -271,8 +272,9 @@ rm -rf ~/.local/state/grok-bot-tray
   未 pin 的新版本记录到 `observed-digests.txt` 并**默认拒绝安装**；
   人工审查记录的摘要后，用 `scripts/grokbot-update.sh pin <version>`
   提升为 pin 并发布该文件，或显式设置
-  `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份使用唯一路径
-  （时间戳 + 进程号），绝不覆盖或删除既有目录。
+  `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份名用 `mktemp`
+  排他预留（同目录、不可预测），任何名字上已有的用户目录或链接都绝不会
+  被删除或覆盖。
 - `install.sh` **拒绝覆盖、停止、禁用或删除不属于本插件的 systemd 单元**：
   每个生成的单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入
   任何内容前中止安装，`--uninstall` 也只对带标记的单元执行
