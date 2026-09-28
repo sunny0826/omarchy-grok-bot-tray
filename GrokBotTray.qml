@@ -14,6 +14,11 @@ BarWidget {
   property string botState: "stopped"
   // on | off — the daily auto-update switch (grokbot-update.timer enable state)
   property string autoUpdateState: "on"
+  // idle | checking | up-to-date | available | updating | failed — the
+  // "Check for updates" flow: check first, install only on confirmation
+  property string updateCheckState: "idle"
+  property string updateCurrentVersion: ""
+  property string updateLatestVersion: ""
 
   readonly property bool running: botState === "running-visible" || botState === "running-hidden"
 
@@ -28,9 +33,22 @@ BarWidget {
 
   // The app itself can't update on Linux ("此平台不支持更新") — the external
   // updater checks the official download page, downloads, swaps and verifies;
-  // it reports the outcome via desktop notification.
+  // it reports the outcome via desktop notification. Checking and installing
+  // are separate steps: "Check for updates" only checks and shows the result
+  // in the menu — nothing is installed before the user confirms.
+  function runUpdateCheck() {
+    root.updateCheckState = "checking"
+    updateCheckProc.running = true
+  }
+
   function runUpdate() {
+    root.updateCheckState = "updating"
     Quickshell.execDetached([updatePath, "run"])
+    updateResetTimer.restart()
+  }
+
+  function dismissUpdate() {
+    root.updateCheckState = "idle"
   }
 
   // The auto-update choice persists as grok-bot-update.timer's enable state
@@ -56,6 +74,39 @@ BarWidget {
     stdout: StdioCollector {
       onStreamFinished: root.autoUpdateState = text.trim()
     }
+  }
+
+  // Parses grokbot-update.sh check: "up-to-date <v>",
+  // "update-available <v> -> <new>" or "check-failed (feed unreachable)".
+  Process {
+    id: updateCheckProc
+    command: [root.updatePath, "check"]
+
+    stdout: StdioCollector {
+      onStreamFinished: {
+        const out = text.trim();
+        const arrow = out.indexOf("->");
+        if (out.indexOf("update-available") === 0 && arrow >= 0) {
+          root.updateCurrentVersion = out.slice(17, arrow).trim();
+          root.updateLatestVersion = out.slice(arrow + 2).trim();
+          root.updateCheckState = "available";
+        } else if (out.indexOf("up-to-date") === 0) {
+          root.updateCurrentVersion = out.slice(10).trim();
+          root.updateCheckState = "up-to-date";
+        } else {
+          root.updateCheckState = "failed";
+        }
+      }
+    }
+  }
+
+  // Safety: never leave the row stuck on "Updating…" if the updater's
+  // completion notification is missed — back to idle after a while.
+  Timer {
+    id: updateResetTimer
+    interval: 60000
+    repeat: false
+    onTriggered: if (root.updateCheckState === "updating") root.updateCheckState = "idle"
   }
 
   Timer {
@@ -181,7 +232,9 @@ BarWidget {
         }
       }
 
-      // Row: check & install update (external updater — app can't on Linux)
+      // Row: check for updates (external updater — the app can't update on
+      // Linux). Checks only; the row shows the result and nothing is
+      // installed before the user confirms below.
       Rectangle {
         id: updateRow
         width: menuColumn.width
@@ -195,8 +248,23 @@ BarWidget {
           anchors.verticalCenter: parent.verticalCenter
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
-          text: "Check for updates"
-          color: Color.popups.text
+          text: {
+            switch (root.updateCheckState) {
+            case "checking":
+              return "Checking for updates…";
+            case "up-to-date":
+              return "No update available" + (root.updateCurrentVersion ? " (current " + root.updateCurrentVersion + ")" : "");
+            case "available":
+              return "Update available: " + (root.updateLatestVersion || "new version");
+            case "updating":
+              return "Updating…";
+            case "failed":
+              return "Check failed (network) — tap to retry";
+            default:
+              return "Check for updates";
+            }
+          }
+          color: root.updateCheckState === "available" ? Color.accent : Color.popups.text
           font.family: Style.font.family
           font.pixelSize: Style.font.body
         }
@@ -208,8 +276,75 @@ BarWidget {
         TapHandler {
           acceptedButtons: Qt.LeftButton
           onTapped: {
-            menu.open = false;
-            root.runUpdate();
+            if (root.updateCheckState === "checking" || root.updateCheckState === "updating") {
+              return;
+            }
+            root.runUpdateCheck();
+          }
+        }
+      }
+
+      // Row: confirm or dismiss the available update
+      Row {
+        visible: root.updateCheckState === "available"
+        width: menuColumn.width
+        height: Style.spacing.controlHeight
+        spacing: Style.space(8)
+
+        Rectangle {
+          width: (menuColumn.width - Style.space(8)) / 2
+          height: parent.height
+          radius: Style.cornerRadius
+          color: "transparent"
+          border.width: 1
+          border.color: Color.accent
+          opacity: updateNowHover.hovered ? 0.75 : 1.0
+
+          Text {
+            anchors.centerIn: parent
+            text: "Update now"
+            color: Color.accent
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+          }
+
+          HoverHandler {
+            id: updateNowHover
+          }
+
+          TapHandler {
+            acceptedButtons: Qt.LeftButton
+            onTapped: {
+              root.runUpdate();
+            }
+          }
+        }
+
+        Rectangle {
+          width: (menuColumn.width - Style.space(8)) / 2
+          height: parent.height
+          radius: Style.cornerRadius
+          color: "transparent"
+          border.width: updateLaterHover.hovered ? 1 : 0
+          border.color: Color.popups.border
+
+          Text {
+            anchors.centerIn: parent
+            text: "Not now"
+            color: Color.popups.text
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+          }
+
+          HoverHandler {
+            id: updateLaterHover
+          }
+
+          TapHandler {
+            acceptedButtons: Qt.LeftButton
+            onTapped: {
+              root.dismissUpdate();
+            }
           }
         }
       }

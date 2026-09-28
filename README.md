@@ -74,7 +74,7 @@ bash .../install.sh --uninstall       # remove the systemd units
 |---|---|
 | Close the window (X) | Process exits → supervisor relaunches in ~2 s → window parks in the tray (≈ minimize to tray) |
 | Left click on bar icon | In tray → show + focus; visible → hide; not running → start |
-| Right click → Check for updates | Update now, result via desktop notification |
+| Right click → Check for updates | Checks first and reports in the menu — "No update available (current v)" or "Update available: v" with **Update now / Not now**. Nothing installs without confirmation; the install result comes via desktop notification |
 | Right click → Auto update | Toggle daily auto-updates (default: on; the choice persists across reboots and re-installs) |
 | Right click → Quit Grok Bot | Real exit (service stopped, no respawn) |
 | Crash / `kill -9` | Automatic restart + hide |
@@ -225,7 +225,7 @@ bash .../install.sh --uninstall       # 卸载 systemd 单元
 |---|---|
 | 点窗口 X | 进程退出 → 约 2s 被守护拉起 → 窗口自动入托盘（≈ 最小化到托盘） |
 | bar 左键 | 在托盘→显示并聚焦；可见→隐藏；未运行→启动 |
-| bar 右键 → 检查更新 | 立即检查安装，结果桌面通知 |
+| bar 右键 → 检查更新 | 先检查并在菜单内反馈——无更新（当前 v）或发现新版 v（可选 **立即更新 / 暂不**）。未确认绝不安装；更新结果桌面通知 |
 | bar 右键 → 自动更新 | 每日自动更新开关（默认开启；选择跨重启与重装持久保留） |
 | bar 右键 → 退出 Grok Bot | 真退出（服务停止，不复活） |
 | 崩溃 / `kill -9` | 自动重启并隐藏 |
