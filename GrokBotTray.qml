@@ -190,7 +190,10 @@ BarWidget {
     anchorItem: root
     bar: root.bar
     owner: root
-    contentWidth: menu.fittedContentWidth(Style.space(200))
+    // Grow with the widest row text so status lines like
+    // "No update available (current 0.61.0)" are never clipped; the
+    // screen-fitted cap still protects very narrow displays.
+    contentWidth: menu.fittedContentWidth(Math.max(Style.space(200), menu.padding * 2 + Math.max(toggleText.implicitWidth + Style.space(16), updateText.implicitWidth + Style.space(16), autoText.implicitWidth + Style.space(50), quitText.implicitWidth + Style.space(16))))
     contentHeight: menu.fittedContentHeight(menuColumn.implicitHeight)
 
     Column {
@@ -209,9 +212,12 @@ BarWidget {
         border.color: Color.popups.border
 
         Text {
+          id: toggleText
           anchors.verticalCenter: parent.verticalCenter
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
+          width: parent.width - Style.space(16)
+          elide: Text.ElideRight
           text: root.botState === "running-hidden" ? "Show window" : "Hide window"
           color: Color.popups.text
           opacity: root.running ? 1.0 : 0.4
@@ -245,9 +251,12 @@ BarWidget {
         border.color: Color.popups.border
 
         Text {
+          id: updateText
           anchors.verticalCenter: parent.verticalCenter
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
+          width: parent.width - Style.space(16)
+          elide: Text.ElideRight
           text: {
             switch (root.updateCheckState) {
             case "checking":
@@ -361,9 +370,12 @@ BarWidget {
         border.color: Color.popups.border
 
         Text {
+          id: autoText
           anchors.verticalCenter: parent.verticalCenter
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
+          width: parent.width - Style.space(50)
+          elide: Text.ElideRight
           text: "Auto update"
           color: Color.popups.text
           font.family: Style.font.family
@@ -422,9 +434,12 @@ BarWidget {
         opacity: root.running ? 1 : 0.4
 
         Text {
+          id: quitText
           anchors.verticalCenter: parent.verticalCenter
           anchors.left: parent.left
           anchors.leftMargin: Style.space(8)
+          width: parent.width - Style.space(16)
+          elide: Text.ElideRight
           text: "Quit Grok Bot"
           color: Color.urgent
           font.family: Style.font.family
