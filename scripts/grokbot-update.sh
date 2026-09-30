@@ -7,6 +7,16 @@
 set -euo pipefail
 
 FEED_PAGE="https://cursor.com/download/bot"
+# --- Network fetch policy (update path) --------------------------------
+# Every request goes through fetch_bounded: https only, at most MAX_REDIRS
+# redirects, a final host matching the caller's allowlist regex, and a hard
+# response-size cap. Off-policy responses are refused outright - never
+# truncated and used.
+MAX_REDIRS=5
+FEED_MAX=1048576        # feed HTML is ~135 KB; 1 MiB is ample headroom
+PKG_MAX=1073741824      # the .deb is ~100 MB; 1 GiB cap
+FEED_HOST_RE='^(www\.)?cursor\.com$'
+PKG_HOST_RE='^downloads\.cursor\.com$'
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Repository root (this script lives in scripts/): holds checksums.txt, the
 # trust root for release digests — independent of the download URL.
@@ -27,6 +37,45 @@ mkdir -p "$STATE_DIR"
 log() { echo "[$(date '+%F %T')] $*" >>"$LOG"; }
 notify() { notify-send "Grok Bot Update" "$1" 2>/dev/null || true; }
 
+# fetch_bounded <url> <out-file> <max-bytes> <max-seconds> <final-host-re>
+# Bounded GET for every fetch on the update path. The body lands in
+# <out-file>; unless every policy check passes the transfer is refused and
+# <out-file> removed:
+#   - https only and at most MAX_REDIRS redirects
+#     (--proto / --proto-redir / --max-redirs), so a chain cannot wander
+#     off https or loop away;
+#   - the FINAL hostname after any redirect chain must match <final-host-re>
+#     (checked against curl's %{url_effective}, userinfo and port stripped),
+#     so a redirect can never hand the fetch to an unrelated host;
+#   - the body must fit <max-bytes>: --max-filesize rejects a known-oversize
+#     body before the first byte and aborts chunked ones mid-transfer on
+#     curl >= 8.4.0, while `ulimit -f` (512-byte blocks) makes the kernel
+#     kill any write past the cap on older curl too. An unbounded or
+#     oversized response can therefore neither exhaust memory nor disk.
+fetch_bounded() {
+  local url="$1" out="$2" max="$3" secs="$4" host_re="$5" effective host rc
+  effective="$(
+    ( ulimit -f "$(( (max + 511) / 512 ))"; exec curl -fsSL --retry 2 \
+        --max-time "$secs" --max-redirs "$MAX_REDIRS" \
+        --proto '=https' --proto-redir '=https' --max-filesize "$max" \
+        -o "$out" -w '%{url_effective}' "$url" )
+  )" || rc=$?
+  if [[ -n "${rc:-}" ]]; then
+    log "fetch failed (curl exit $rc): $url"
+    rm -f "$out"
+    return 1
+  fi
+  host="${effective#*://}"
+  host="${host%%[/?#]*}"   # drop path/query/fragment
+  host="${host##*@}"       # drop any userinfo
+  host="${host%%:*}"       # drop the port: TLS cert checks already pin identity
+  if [[ "$effective" != https://* ]] || ! [[ "${host,,}" =~ $host_re ]]; then
+    log "refused fetch: final host '${host:-?}' not allowed for $url"
+    rm -f "$out"
+    return 1
+  fi
+}
+
 local_version() {
   # Prefer the copy inside APP_DIR (copied there by this updater), then the
   # doc location a package-manager install provides.
@@ -41,8 +90,14 @@ local_version() {
 
 # Prints: <version>\t<url> of the latest linux/x64 .deb, or fails.
 remote_latest() {
-  local html url ver
-  html="$(curl -fsSL --max-time 30 "$FEED_PAGE")" || return 1
+  local html url ver page
+  page="$(mktemp "$STATE_DIR/feed.XXXXXXXXXX")" || return 1
+  if ! fetch_bounded "$FEED_PAGE" "$page" "$FEED_MAX" 30 "$FEED_HOST_RE"; then
+    return 1
+  fi
+  # fetch_bounded already capped the file at FEED_MAX; bound the read too.
+  html="$(head -c "$FEED_MAX" <"$page")"
+  rm -f "$page"
   url="$(grep -aoE 'https://downloads\.cursor\.com/grokbot/[^"]*linux/x64/grok-bot_[0-9][0-9.]*_amd64\.deb' <<<"$html" | head -1)" || true
   [[ -n "$url" ]] || return 1
   ver="$(sed -E 's#.*grok-bot_([0-9][0-9.]*)_amd64\.deb#\1#' <<<"$url")"
@@ -164,7 +219,7 @@ cmd_run() {
   # Download, reusing an already-fetched package (retry-friendly).
   if ! bsdtar -tf "$pkg" >/dev/null 2>&1; then
     rm -f "$pkg"
-    curl -fL --max-time 900 --retry 2 -o "$pkg" "$url" || { log "download failed"; notify "更新失败：下载出错（见 update.log）"; return 1; }
+    fetch_bounded "$url" "$pkg" "$PKG_MAX" 900 "$PKG_HOST_RE" || { log "download failed"; notify "更新失败：下载出错（见 update.log）"; return 1; }
   fi
   bsdtar -tf "$pkg" >/dev/null 2>&1 || { log "package is not a valid deb"; notify "更新失败：包损坏（见 update.log）"; return 1; }
 

@@ -137,6 +137,13 @@ rm -rf ~/.local/state/grok-bot-tray
   Rollback backup names are reserved with `mktemp` — exclusive creation
   of an unpredictable same-directory name — so a pre-existing user
   directory or symlink at any name is never deleted or overwritten.
+- **Every network fetch is bounded and host-constrained**: https only, at
+  most 5 redirects per request, and the final hostname after any redirect
+  chain must be `cursor.com` (feed page) or `downloads.cursor.com` (the
+  package) — a redirect landing anywhere else is refused outright. Response
+  sizes are hard-capped (1 MiB for the feed page, 1 GiB for the package) at
+  both the curl and kernel level, so an unbounded or oversized response can
+  never exhaust memory or disk.
 - `install.sh` **refuses to overwrite, stop, disable, or remove systemd
   units it does not own**: every generated unit carries a `# Managed-by:`
   marker, existing units without it abort the install before anything is
@@ -282,6 +289,11 @@ rm -rf ~/.local/state/grok-bot-tray
   `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份名用 `mktemp`
   排他预留（同目录、不可预测），任何名字上已有的用户目录或链接都绝不会
   被删除或覆盖。
+- **所有网络抓取均有大小上限与主机约束**：仅 https、每请求重定向至多 5 跳，
+  且重定向链的最终主机名必须是 `cursor.com`（下载页）或
+  `downloads.cursor.com`（安装包）——最终落在其他主机一律拒绝。
+  响应体大小在 curl 与内核两层设硬上限（下载页 1 MiB、安装包 1 GiB），
+  无界或超大响应绝不会耗尽内存或磁盘。
 - `install.sh` **拒绝覆盖、停止、禁用或删除不属于本插件的 systemd 单元**：
   每个生成的单元都带 `# Managed-by:` 标记；已存在的无标记单元会在写入
   任何内容前中止安装，`--uninstall` 也只对带标记的单元执行
