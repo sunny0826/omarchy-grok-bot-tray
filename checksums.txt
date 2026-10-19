@@ -1,3 +1,6 @@
 # sha256 of the official linux/x64 .deb, keyed by version.
 # Verified by scripts/grokbot-update.sh before any install (see README).
+# Releases not listed here are accepted on first sight (TOFU) and recorded
+# in ~/.local/state/grok-bot-tray/observed-digests.txt.
 0.61.0 3616c006748993a02674afc8a50513073d716b3bfa554943450dacf8e82576ef
+0.71.2 a0526d75a3e852ed59e507889bc3aa6a5185a8d043632ce8deca98b04ab06348

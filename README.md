@@ -96,6 +96,9 @@ CTL=~/.config/omarchy/plugins/sunny0826.grok-bot-tray/scripts/grokbot-ctl.sh
 $CTL status      # starting | stopped | running-visible | running-hidden
 $CTL toggle      # show/hide/start as appropriate
 bash "$(dirname $CTL)/grokbot-update.sh" check   # version comparison only
+bash "$(dirname $CTL)/grokbot-update.sh" run     # check + download + install
+bash "$(dirname $CTL)/grokbot-update.sh" pin <v> # promote the recorded digest to checksums.txt
+bash "$(dirname $CTL)/grokbot-update.sh" forget <v>  # drop a known-stale observed digest
 ```
 
 ### Removal
@@ -125,15 +128,17 @@ rm -rf ~/.local/state/grok-bot-tray
   hiding uses Hyprland special workspaces and process supervision only.
 - The updater fetches only from official endpoints
   (`cursor.com/download/bot` → `downloads.cursor.com`) and validates the
-  archive with `bsdtar`. **Release integrity is fail-closed**: before
-  unpacking, the package's SHA-256 must match the pin in this repository's
-  [`checksums.txt`](checksums.txt) — a git-managed trust root that is
-  independent of the mutable download URL (same-origin companion digests are
-  deliberately not trusted). Unpinned releases are recorded to
-  `observed-digests.txt` and **refused by default**; after reviewing the
-  recorded digest, promote it with
-  `scripts/grokbot-update.sh pin <version>` and publish the file, or set
-  `GROKBOT_UPDATE_VERIFY=unpinned-ok` to opt into installing it directly.
+  archive with `bsdtar`. **Release integrity is trust-on-first-use**: the
+  first SHA-256 seen for a version is recorded in
+  `~/.local/state/grok-bot-tray/observed-digests.txt` and accepted; a later
+  download of the same version with a different digest is refused. Releases
+  pinned in this repository's [`checksums.txt`](checksums.txt) — a git-managed
+  trust root independent of the mutable download URL (same-origin companion
+  digests are deliberately not trusted) — are always checked strictly, and a
+  mismatch is refused. Set `GROKBOT_UPDATE_VERIFY=strict` for fail-closed
+  behavior: unpinned releases are recorded but refused until promoted with
+  `scripts/grokbot-update.sh pin <version>`. The package's `control` version
+  must also match the version the download page advertised.
   Rollback backup names are reserved with `mktemp` — exclusive creation
   of an unpredictable same-directory name — so a pre-existing user
   directory or symlink at any name is never deleted or overwritten.
@@ -254,6 +259,9 @@ CTL=~/.config/omarchy/plugins/sunny0826.grok-bot-tray/scripts/grokbot-ctl.sh
 $CTL status      # starting | stopped | running-visible | running-hidden
 $CTL toggle      # 智能显示/隐藏/启动
 bash "$(dirname $CTL)/grokbot-update.sh" check   # 仅版本对比
+bash "$(dirname $CTL)/grokbot-update.sh" run     # 检查 + 下载 + 安装
+bash "$(dirname $CTL)/grokbot-update.sh" pin <版本>     # 把已记录摘要提升为 pin
+bash "$(dirname $CTL)/grokbot-update.sh" forget <版本>  # 删除已知陈旧的摘要记录
 ```
 
 ### 卸载
@@ -280,15 +288,17 @@ rm -rf ~/.local/state/grok-bot-tray
 - **从不修改、不逆向** Grok Bot 应用本体——隐藏仅通过 Hyprland 特殊
   workspace 与进程守护实现（不触碰应用的使用条款限制）。
 - 更新器仅访问官方源（`cursor.com/download/bot` → `downloads.cursor.com`），
-  用 `bsdtar` 校验归档。**发布完整性为 fail-closed**：解包前包的 SHA-256
-  必须与本仓库 [`checksums.txt`](checksums.txt) 中的 pin 一致——该文件由
-  git 管理、独立于可变下载 URL（同源的伴随校验文件被有意不信任）。
-  未 pin 的新版本记录到 `observed-digests.txt` 并**默认拒绝安装**；
-  人工审查记录的摘要后，用 `scripts/grokbot-update.sh pin <version>`
-  提升为 pin 并发布该文件，或显式设置
-  `GROKBOT_UPDATE_VERIFY=unpinned-ok` 直接放行。回滚备份名用 `mktemp`
-  排他预留（同目录、不可预测），任何名字上已有的用户目录或链接都绝不会
-  被删除或覆盖。
+  用 `bsdtar` 校验归档。**发布完整性采用首次使用即信任（TOFU）**：
+  某个版本首次出现的 SHA-256 会记录到
+  `~/.local/state/grok-bot-tray/observed-digests.txt` 并允许安装；
+  同一版本之后若下载到不同摘要则拒绝。本仓库
+  [`checksums.txt`](checksums.txt) 中已 pin 的版本始终严格比对，不符即拒绝
+  （该文件由 git 管理、独立于可变下载 URL，同源的伴随校验文件被有意不信任）。
+  设置 `GROKBOT_UPDATE_VERIFY=strict` 可恢复 fail-closed：未 pin 的版本只记录、
+  拒绝安装，审查后用 `scripts/grokbot-update.sh pin <version>` 提升。
+  包内 `control` 的版本号也必须与下载页公布的版本一致。回滚备份名用
+  `mktemp` 排他预留（同目录、不可预测），任何名字上已有的用户目录或链接都
+  绝不会被删除或覆盖。
 - **所有网络抓取均有大小上限与主机约束**：仅 https、每请求重定向至多 5 跳，
   且重定向链的最终主机名必须是 `cursor.com`（下载页）或
   `downloads.cursor.com`（安装包）——最终落在其他主机一律拒绝。

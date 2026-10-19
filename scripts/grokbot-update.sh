@@ -28,6 +28,7 @@ APP_DIR="${GROKBOT_APP_DIR:-$HOME/.local/opt/Grok Bot}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/grok-bot-tray"
 WORK="$STATE_DIR/update-work"
 LOG="$STATE_DIR/update.log"
+OBSERVED="$STATE_DIR/observed-digests.txt"
 CTL="$SCRIPT_DIR/grokbot-ctl.sh"
 
 # The state dir must exist before the first log line — on a fresh install
@@ -112,19 +113,60 @@ split_tab() {
   REPLY_URL="${1#*$'\t'}"
 }
 
+observed_digests() {
+  # observed_digests <version> — unique digests recorded for that version.
+  awk -v v="$1" '$1==v {print $2}' "$OBSERVED" 2>/dev/null | sort -u || true
+}
+
+forget_version() {
+  # forget_version <version> — drop every recorded digest for a version.
+  [[ -f "$OBSERVED" ]] || return 0
+  awk -v v="$1" '$1!=v' "$OBSERVED" >"$OBSERVED.tmp"
+  mv -f "$OBSERVED.tmp" "$OBSERVED"
+}
+
+record_digest() {
+  # record_digest <version> <sha256> — append unless already recorded.
+  grep -qxF "$1 $2" "$OBSERVED" 2>/dev/null && return 0
+  echo "$1 $2" >>"$OBSERVED"
+}
+
+migrate_stale_digests() {
+  # One-time cleanup for installs upgraded from the old fixed-name cache:
+  # those releases reused a stale package and recorded its digest under every
+  # version it was offered for. A recorded digest that equals a *pin* for a
+  # different version cannot belong to the recorded version. Rewrite the file
+  # once, keeping one line per version. Conflict handling afterwards is
+  # strict: a recorded digest that merely matches another version's pin could
+  # be a real artifact, so it is never auto-trusted.
+  local marker="$STATE_DIR/observed-digests.migrated"
+  [[ -f "$OBSERVED" && ! -f "$marker" ]] || return 0
+  awk 'NR==FNR {if ($1 !~ /^#/) pinned_ver[$2]=$1; next}
+       {if (($2 in pinned_ver) && pinned_ver[$2]!=$1) next
+        if ($1 in seen) next
+        seen[$1]=1; print}
+      ' "$PLUGIN_ROOT/checksums.txt" "$OBSERVED" >"$OBSERVED.tmp" 2>/dev/null || return 0
+  mv -f "$OBSERVED.tmp" "$OBSERVED"
+  : >"$marker"
+  log "migrated observed-digests.txt: dropped records that contradict a pin"
+}
+
 verify_digest() {
   # verify_digest <version> <pkg-path> — called before unpacking.
   #
   # The trust root is checksums.txt in this repository (a git-managed file,
   # independent of the mutable download URL and its same-origin companion
-  # files). Policy is fail-closed:
+  # files). Policy:
   #   - pinned release: the digest MUST match, otherwise the install is
   #     refused (supply-chain protection)
-  #   - unpinned release: the digest is recorded to observed-digests.txt and
-  #     the install is REFUSED by default; after manual review promote it
-  #     with `grokbot-update.sh pin <version>` (or set
-  #     GROKBOT_UPDATE_VERIFY=unpinned-ok to opt into installing it directly)
-  local ver="$1" pkg="$2" sum pinned
+  #   - unpinned release: trust-on-first-use. The first digest seen for a
+  #     version is recorded to observed-digests.txt and accepted; if the
+  #     same version later arrives with a different digest it is refused.
+  #     This keeps unattended daily updates working without a manual pin
+  #     for every release, while still detecting a changed artifact.
+  #   - GROKBOT_UPDATE_VERIFY=strict restores fail-closed: unpinned releases
+  #     are recorded and refused until promoted with `pin <version>`.
+  local ver="$1" pkg="$2" sum pinned recorded
   sum="$(sha256sum "$pkg" | awk '{print $1}')"
 
   pinned="$(awk -v v="$ver" '$1==v {print $2}' "$PLUGIN_ROOT/checksums.txt" 2>/dev/null || true)"
@@ -138,17 +180,29 @@ verify_digest() {
     return 1
   fi
 
-  # Unpinned release: record for auditing, then refuse by default.
   mkdir -p "$STATE_DIR"
-  echo "$ver $sum" >>"$STATE_DIR/observed-digests.txt"
-  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "unpinned-ok" ]]; then
-    log "unpinned release $ver accepted via GROKBOT_UPDATE_VERIFY=unpinned-ok (sha256=$sum)"
-    notify "Grok Bot $ver 无 pin，按 unpinned-ok 设置继续（sha256 已记录）"
-    return 0
+  migrate_stale_digests
+  recorded="$(observed_digests "$ver")"
+  if [[ -n "$recorded" && "$recorded" != "$sum" ]]; then
+    log "digest MISMATCH vs first-seen digest for unpinned $ver (expected=$recorded got=$sum)"
+    notify "更新拒绝：$ver 的摘要与首次记录不符（疑似篡改）。若确认旧记录来自旧版更新器，运行 grokbot-update.sh forget $ver"
+    return 1
   fi
-  log "refusing unpinned release $ver (sha256=$sum) — recorded to observed-digests.txt"
-  notify "Grok Bot $ver 无 pin 校验和，已拒绝安装。审查后运行 grokbot-update.sh pin $ver"
-  return 1
+
+  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "strict" ]]; then
+    record_digest "$ver" "$sum"
+    log "refusing unpinned release $ver (strict mode, sha256=$sum) — recorded to observed-digests.txt"
+    notify "Grok Bot $ver 无 pin 校验和，strict 模式下已拒绝。审查后运行 grokbot-update.sh pin $ver"
+    return 1
+  fi
+
+  if [[ -z "$recorded" ]]; then
+    record_digest "$ver" "$sum"
+    log "unpinned release $ver accepted on first sight (sha256=$sum, recorded to observed-digests.txt)"
+  else
+    log "unpinned release $ver matches first-seen digest (sha256=$sum)"
+  fi
+  return 0
 }
 
 cmd_pin() {
@@ -162,15 +216,31 @@ cmd_pin() {
     echo "$ver is already pinned in checksums.txt"
     return 0
   fi
-  sum="$(awk -v v="$ver" '$1==v {print $2}' "$STATE_DIR/observed-digests.txt" 2>/dev/null | tail -1)"
+  sum="$(awk -v v="$ver" '$1==v {print $2}' "$OBSERVED" 2>/dev/null | tail -1)"
   if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "no observed digest for $ver in $STATE_DIR/observed-digests.txt" >&2
+    echo "no observed digest for $ver in $OBSERVED" >&2
     echo "Run '$0 run' once so the digest gets recorded, review it, then retry." >&2
     exit 1
   fi
   echo "$ver $sum" >>"$PLUGIN_ROOT/checksums.txt"
   echo "pinned $ver $sum -> $PLUGIN_ROOT/checksums.txt"
   echo "Commit the file to publish the pin for other installs of this plugin."
+}
+
+cmd_forget() {
+  # Drop recorded digests for a version so the next download counts as the
+  # first sight again. Only needed when an old record is known to be stale.
+  local ver="${1:-}"
+  if [[ -z "$ver" ]]; then
+    echo "usage: $0 forget <version>" >&2
+    exit 2
+  fi
+  if [[ -z "$(observed_digests "$ver")" ]]; then
+    echo "no observed digest for $ver"
+    return 0
+  fi
+  forget_version "$ver"
+  echo "forgot observed digest(s) for $ver"
 }
 
 cmd_check() {
@@ -186,7 +256,7 @@ cmd_check() {
 }
 
 cmd_run() {
-  local lv info rv url pkg new_dir new_ver doc_changelog backup status i avail_kb
+  local lv info rv url pkg ctl_ver new_dir new_ver doc_changelog backup status i avail_kb stale
   info="$(remote_latest)" || { log "check failed: feed unreachable"; return 0; }
   split_tab "$info"
   rv="$REPLY_VER" url="$REPLY_URL"
@@ -214,23 +284,39 @@ cmd_run() {
 
   log "update $lv -> $rv"
   mkdir -p "$WORK"
-  pkg="$WORK/pkg.deb"
+  # Cache keyed by version: a package fetched for one release must never be
+  # verified or unpacked under another release's URL (the old fixed pkg.deb
+  # name silently reused a stale 0.61.0 package for later versions).
+  pkg="$WORK/grok-bot_${rv}_amd64.deb"
+  for stale in "$WORK"/pkg.deb "$WORK"/grok-bot_*_amd64.deb; do
+    if [[ -e "$stale" && "$stale" != "$pkg" ]]; then rm -f "$stale"; fi
+  done
 
-  # Download, reusing an already-fetched package (retry-friendly).
+  # Download, reusing an already-fetched package for this exact version
+  # (retry-friendly).
   if ! bsdtar -tf "$pkg" >/dev/null 2>&1; then
     rm -f "$pkg"
     fetch_bounded "$url" "$pkg" "$PKG_MAX" 900 "$PKG_HOST_RE" || { log "download failed"; notify "更新失败：下载出错（见 update.log）"; return 1; }
   fi
   bsdtar -tf "$pkg" >/dev/null 2>&1 || { log "package is not a valid deb"; notify "更新失败：包损坏（见 update.log）"; return 1; }
 
-  # Digest gate before anything is unpacked or swapped: fail-closed unless
-  # the release digest is pinned in this repository's checksums.txt.
+  # Digest gate before anything is unpacked or swapped (see verify_digest).
   verify_digest "$rv" "$pkg" || return 1
 
   # Clean previous unpack output, keep the downloaded package.
   rm -rf "$WORK/opt" "$WORK/usr" "$WORK/control.tar.xz" "$WORK/data.tar.xz" "$WORK/debian-binary"
-  ( cd "$WORK" && bsdtar -xf pkg.deb && data="$(ls data.tar.* 2>/dev/null | head -1)" && [ -n "$data" ] && bsdtar -xf "$data" ) \
+  ( cd "$WORK" && bsdtar -xf "${pkg##*/}" && data="$(ls data.tar.* 2>/dev/null | head -1)" && [ -n "$data" ] && bsdtar -xf "$data" ) \
     || { log "unpack failed (deb or data layer)"; notify "更新失败：解包出错（见 update.log）"; return 1; }
+
+  # The package's own control version is authoritative (independent of the
+  # download filename): refuse a package whose contents don't match the
+  # version the feed advertised.
+  ctl_ver="$( (bsdtar -xOf "$pkg" 'control.tar.*' 2>/dev/null || true) | bsdtar -xOf - ./control 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -1 )"
+  if [[ -n "$ctl_ver" && "$ctl_ver" != "$rv" ]]; then
+    log "package control version mismatch: got '$ctl_ver', expected '$rv'"
+    notify "更新失败：包版本不符（见 update.log）"
+    return 1
+  fi
 
   new_dir="$(dirname "$(find "$WORK" -path '*Grok Bot/grok-bot' -type f 2>/dev/null | head -1)")"
   [[ -n "$new_dir" && -x "$new_dir/grok-bot" ]] || { log "unpack: grok-bot binary not found"; notify "更新失败：解包结构异常（见 update.log）"; return 1; }
@@ -299,9 +385,14 @@ cmd_run() {
   return 1
 }
 
+# Clean up records left by older updaters even when there is nothing to
+# install (idempotent, one-shot via its marker file).
+migrate_stale_digests
+
 case "${1:-check}" in
   check) cmd_check ;;
   run) cmd_run ;;
   pin) shift; cmd_pin "$@" ;;
-  *) echo "usage: $0 {check|run|pin <version>}" >&2; exit 2 ;;
+  forget) shift; cmd_forget "$@" ;;
+  *) echo "usage: $0 {check|run|pin <version>|forget <version>}" >&2; exit 2 ;;
 esac
