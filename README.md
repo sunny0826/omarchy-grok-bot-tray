@@ -26,10 +26,12 @@ Linux (the app itself reports "this platform does not support updates").
   `kill -9`, and starts it hidden at login.
 - **Daily auto-updater** — parses the official download page, downloads the
   latest `.deb`, unpacks it with `bsdtar`, swaps the install with rollback,
-  verifies the new build boots, and notifies you of the result. The
-  right-click menu has an **Auto update switch** (on by default) — turn it
-  off and daily updates stop; your choice persists across reboots and
-  plugin re-installs.
+  verifies the new build boots, and notifies you of the result. Integrity is
+  fail-closed by default: only releases pinned in
+  [`checksums.txt`](checksums.txt) install; opt into unpinned TOFU updates
+  with `install.sh --allow-unpinned-updates`. The right-click menu has an
+  **Auto update switch** (on by default) — turn it off and daily updates
+  stop; your choice persists across reboots and plugin re-installs.
 - **Zero patching** — the Grok Bot application itself is never modified.
 
 ### How it works
@@ -65,6 +67,7 @@ Optional flags:
 
 ```bash
 bash .../install.sh --with-launcher   # unify desktop-icon clicks with the tray
+bash .../install.sh --allow-unpinned-updates  # opt into TOFU for unpinned releases
 bash .../install.sh --uninstall       # remove the systemd units
 ```
 
@@ -128,17 +131,19 @@ rm -rf ~/.local/state/grok-bot-tray
   hiding uses Hyprland special workspaces and process supervision only.
 - The updater fetches only from official endpoints
   (`cursor.com/download/bot` → `downloads.cursor.com`) and validates the
-  archive with `bsdtar`. **Release integrity is trust-on-first-use**: the
-  first SHA-256 seen for a version is recorded in
-  `~/.local/state/grok-bot-tray/observed-digests.txt` and accepted; a later
-  download of the same version with a different digest is refused. Releases
-  pinned in this repository's [`checksums.txt`](checksums.txt) — a git-managed
-  trust root independent of the mutable download URL (same-origin companion
-  digests are deliberately not trusted) — are always checked strictly, and a
-  mismatch is refused. Set `GROKBOT_UPDATE_VERIFY=strict` for fail-closed
-  behavior: unpinned releases are recorded but refused until promoted with
-  `scripts/grokbot-update.sh pin <version>`. The package's `control` version
-  must also match the version the download page advertised.
+  archive with `bsdtar`. **Release integrity is fail-closed by default**: a
+  release is installed only when its SHA-256 matches a pin in this
+  repository's [`checksums.txt`](checksums.txt) — a git-managed trust root
+  independent of the mutable download URL (same-origin companion digests are
+  deliberately not trusted). Unpinned releases are recorded to
+  `~/.local/state/grok-bot-tray/observed-digests.txt` and refused; after
+  reviewing the artifact, promote it with
+  `scripts/grokbot-update.sh pin <version>`. For unattended updates without a
+  pin, opt in explicitly with `install.sh --allow-unpinned-updates` (records
+  the policy for both the timer and the menu's Update now path), which
+  enables trust-on-first-use: the first digest seen for a version is accepted
+  and a later change for the same version is refused. The package's `control`
+  version must also match the version the download page advertised.
   Rollback backup names are reserved with `mktemp` — exclusive creation
   of an unpredictable same-directory name — so a pre-existing user
   directory or symlink at any name is never deleted or overwritten.
@@ -190,9 +195,11 @@ rm -rf ~/.local/state/grok-bot-tray
 - **崩溃守护** — systemd 用户服务在崩溃或 `kill -9` 后自动重启 Grok Bot，
   并在登录时自启隐藏。
 - **每日自动更新** — 解析官方下载页，下载最新 `.deb`，`bsdtar` 解包，
-  带回滚的换位安装，验证新版本能启动，结果桌面通知。右键菜单提供
-  **自动更新开关**（默认开启）——关闭后每日更新停止，选择跨重启与
-  插件重装持久保留。
+  带回滚的换位安装，验证新版本能启动，结果桌面通知。完整性默认
+  fail-closed：只安装 [`checksums.txt`](checksums.txt) 中已 pin 的版本；
+  需要未 pin 的 TOFU 更新时用 `install.sh --allow-unpinned-updates` 显式开启。
+  右键菜单提供 **自动更新开关**（默认开启）——关闭后每日更新停止，
+  选择跨重启与插件重装持久保留。
 - **零侵入** — 从不修改 Grok Bot 应用本体。
 
 ### 工作原理
@@ -228,6 +235,7 @@ omarchy plugin enable sunny0826.grok-bot-tray --section right
 
 ```bash
 bash .../install.sh --with-launcher   # 让桌面图标点击也走托盘逻辑
+bash .../install.sh --allow-unpinned-updates  # 显式允许未 pin 版本（TOFU）
 bash .../install.sh --uninstall       # 卸载 systemd 单元
 ```
 
@@ -288,17 +296,17 @@ rm -rf ~/.local/state/grok-bot-tray
 - **从不修改、不逆向** Grok Bot 应用本体——隐藏仅通过 Hyprland 特殊
   workspace 与进程守护实现（不触碰应用的使用条款限制）。
 - 更新器仅访问官方源（`cursor.com/download/bot` → `downloads.cursor.com`），
-  用 `bsdtar` 校验归档。**发布完整性采用首次使用即信任（TOFU）**：
-  某个版本首次出现的 SHA-256 会记录到
-  `~/.local/state/grok-bot-tray/observed-digests.txt` 并允许安装；
-  同一版本之后若下载到不同摘要则拒绝。本仓库
-  [`checksums.txt`](checksums.txt) 中已 pin 的版本始终严格比对，不符即拒绝
-  （该文件由 git 管理、独立于可变下载 URL，同源的伴随校验文件被有意不信任）。
-  设置 `GROKBOT_UPDATE_VERIFY=strict` 可恢复 fail-closed：未 pin 的版本只记录、
-  拒绝安装，审查后用 `scripts/grokbot-update.sh pin <version>` 提升。
-  包内 `control` 的版本号也必须与下载页公布的版本一致。回滚备份名用
-  `mktemp` 排他预留（同目录、不可预测），任何名字上已有的用户目录或链接都
-  绝不会被删除或覆盖。
+  用 `bsdtar` 校验归档。**发布完整性默认 fail-closed**：只有 SHA-256 与本仓库
+  [`checksums.txt`](checksums.txt) 中 pin 一致的版本才允许安装——该文件由 git
+  管理、独立于可变下载 URL（同源的伴随校验文件被有意不信任）。未 pin 的版本
+  记录到 `~/.local/state/grok-bot-tray/observed-digests.txt` 并拒绝安装；
+  人工审查该产物后，用 `scripts/grokbot-update.sh pin <version>` 提升为 pin。
+  若确实需要无人值守安装未 pin 版本，必须显式运行
+  `install.sh --allow-unpinned-updates`（同时记录给 timer 与菜单的“立即更新”
+  路径），此时才启用首次使用即信任（TOFU）：某版本首次出现的摘要被接受，
+  同版本之后摘要变化仍会被拒绝。包内 `control` 的版本号也必须与下载页
+  公布的版本一致。回滚备份名用 `mktemp` 排他预留（同目录、不可预测），任何
+  名字上已有的用户目录或链接都绝不会被删除或覆盖。
 - **所有网络抓取均有大小上限与主机约束**：仅 https、每请求重定向至多 5 跳，
   且重定向链的最终主机名必须是 `cursor.com`（下载页）或
   `downloads.cursor.com`（安装包）——最终落在其他主机一律拒绝。

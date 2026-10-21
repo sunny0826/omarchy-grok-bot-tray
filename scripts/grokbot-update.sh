@@ -26,6 +26,8 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="${GROKBOT_APP_DIR:-$HOME/.local/opt/Grok Bot}"
 [[ -x "$APP_DIR/grok-bot" ]] || APP_DIR="/opt/Grok Bot"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/grok-bot-tray"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/grok-bot-tray"
+POLICY_FILE="$CONFIG_DIR/update-policy"
 WORK="$STATE_DIR/update-work"
 LOG="$STATE_DIR/update.log"
 OBSERVED="$STATE_DIR/observed-digests.txt"
@@ -37,6 +39,16 @@ mkdir -p "$STATE_DIR"
 
 log() { echo "[$(date '+%F %T')] $*" >>"$LOG"; }
 notify() { notify-send "Grok Bot Update" "$1" 2>/dev/null || true; }
+
+verify_policy() {
+  # strict (default) or unpinned-ok. The environment wins; otherwise read the
+  # policy install.sh wrote, so the timer and the menu's "Update now" agree.
+  local p="${GROKBOT_UPDATE_VERIFY:-}"
+  if [[ -z "$p" && -f "$POLICY_FILE" ]]; then
+    p="$(head -n 1 "$POLICY_FILE" 2>/dev/null || true)"
+  fi
+  if [[ "$p" == "unpinned-ok" ]]; then echo unpinned-ok; else echo strict; fi
+}
 
 # fetch_bounded <url> <out-file> <max-bytes> <max-seconds> <final-host-re>
 # Bounded GET for every fetch on the update path. The body lands in
@@ -156,16 +168,16 @@ verify_digest() {
   #
   # The trust root is checksums.txt in this repository (a git-managed file,
   # independent of the mutable download URL and its same-origin companion
-  # files). Policy:
+  # files). Policy is fail-closed by default:
   #   - pinned release: the digest MUST match, otherwise the install is
   #     refused (supply-chain protection)
-  #   - unpinned release: trust-on-first-use. The first digest seen for a
-  #     version is recorded to observed-digests.txt and accepted; if the
-  #     same version later arrives with a different digest it is refused.
-  #     This keeps unattended daily updates working without a manual pin
-  #     for every release, while still detecting a changed artifact.
-  #   - GROKBOT_UPDATE_VERIFY=strict restores fail-closed: unpinned releases
-  #     are recorded and refused until promoted with `pin <version>`.
+  #   - unpinned release: the digest is recorded to observed-digests.txt for
+  #     audit and the install is REFUSED until a maintainer reviews it and
+  #     promotes it with `grokbot-update.sh pin <version>`.
+  #   - GROKBOT_UPDATE_VERIFY=unpinned-ok is an explicit, documented opt-in
+  #     for unattended updates. Only then is the first digest seen for a
+  #     version accepted (trust-on-first-use); a later download of the same
+  #     version with a different digest is still refused.
   local ver="$1" pkg="$2" sum pinned recorded
   sum="$(sha256sum "$pkg" | awk '{print $1}')"
 
@@ -183,22 +195,26 @@ verify_digest() {
   mkdir -p "$STATE_DIR"
   migrate_stale_digests
   recorded="$(observed_digests "$ver")"
+
+  # Fail-closed default: only an independently reviewed pin may be installed.
+  if [[ "$(verify_policy)" != "unpinned-ok" ]]; then
+    record_digest "$ver" "$sum"
+    log "refusing unpinned release $ver (fail-closed, sha256=$sum) — recorded to observed-digests.txt"
+    notify "Grok Bot $ver 无 pin 校验和，已拒绝安装。审查后运行 grokbot-update.sh pin $ver；或显式设置 GROKBOT_UPDATE_VERIFY=unpinned-ok 接受首次摘要"
+    return 1
+  fi
+
+  # Explicit opt-in: trust on first use, but never accept a changed digest
+  # for a version that has already been seen.
   if [[ -n "$recorded" && "$recorded" != "$sum" ]]; then
     log "digest MISMATCH vs first-seen digest for unpinned $ver (expected=$recorded got=$sum)"
     notify "更新拒绝：$ver 的摘要与首次记录不符（疑似篡改）。若确认旧记录来自旧版更新器，运行 grokbot-update.sh forget $ver"
     return 1
   fi
 
-  if [[ "${GROKBOT_UPDATE_VERIFY:-}" == "strict" ]]; then
-    record_digest "$ver" "$sum"
-    log "refusing unpinned release $ver (strict mode, sha256=$sum) — recorded to observed-digests.txt"
-    notify "Grok Bot $ver 无 pin 校验和，strict 模式下已拒绝。审查后运行 grokbot-update.sh pin $ver"
-    return 1
-  fi
-
   if [[ -z "$recorded" ]]; then
     record_digest "$ver" "$sum"
-    log "unpinned release $ver accepted on first sight (sha256=$sum, recorded to observed-digests.txt)"
+    log "unpinned release $ver accepted on first sight via unpinned-ok (sha256=$sum)"
   else
     log "unpinned release $ver matches first-seen digest (sha256=$sum)"
   fi

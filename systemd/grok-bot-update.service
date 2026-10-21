@@ -3,4 +3,7 @@ Description=Check and install Grok Bot updates (app has no Linux updater)
 
 [Service]
 Type=oneshot
+# Rendered by install.sh: strict (fail-closed, default) or unpinned-ok
+# (explicit --allow-unpinned-updates opt-in).
+Environment=GROKBOT_UPDATE_VERIFY=@UPDATE_VERIFY@
 ExecStart=@PLUGIN_DIR@/scripts/grokbot-update.sh run

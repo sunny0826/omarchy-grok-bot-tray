@@ -6,6 +6,8 @@ set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 UNIT_DIR="$HOME/.config/systemd/user"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/grok-bot-tray"
+POLICY_FILE="$CONFIG_DIR/update-policy"
 SHIM="$HOME/.local/bin/grok-bot"
 
 is_managed() {
@@ -20,7 +22,13 @@ is_managed() {
 install_units() {
   echo "Installing units: $PLUGIN_DIR/systemd/ -> $UNIT_DIR/"
   mkdir -p "$UNIT_DIR"
-  local f target tmp keep_autoupdate_off=false
+  local f target tmp keep_autoupdate_off=false update_verify=strict
+  # Update integrity is fail-closed by default: only releases pinned in
+  # checksums.txt are installed. Unattended updates for unpinned releases
+  # require the explicit --allow-unpinned-updates opt-in below.
+  if [[ "$ALLOW_UNPINNED_UPDATES" == true ]]; then
+    update_verify=unpinned-ok
+  fi
   # Respect an earlier user choice: if our update timer already exists and is
   # disabled, a re-install keeps daily auto-updates off (the menu switch is
   # the user's control) instead of re-enabling the default.
@@ -43,6 +51,13 @@ install_units() {
       exit 1
     fi
   done
+  # All clear: persist the policy for both the timer (unit Environment) and
+  # the menu's "Update now" path (which does not inherit the unit env).
+  mkdir -p "$CONFIG_DIR"
+  local policy_tmp
+  policy_tmp="$(mktemp "$CONFIG_DIR/.update-policy.XXXXXXXX")"
+  printf '%s\n' "$update_verify" >"$policy_tmp"
+  mv -f "$policy_tmp" "$POLICY_FILE"
   # Pass 2: all clear — render every unit with an ownership marker. Each
   # unit is created exclusively at an unpredictable same-directory name
   # and renamed into place, so a redirect can never follow a link either.
@@ -50,7 +65,7 @@ install_units() {
     target="$UNIT_DIR/$f"
     tmp="$(mktemp "$UNIT_DIR/.$f.XXXXXXXX")"
     { echo "# Managed-by: sunny0826.grok-bot-tray"
-      sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PLUGIN_DIR/systemd/$f"; } >"$tmp"
+      sed -e "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" -e "s|@UPDATE_VERIFY@|$update_verify|g" "$PLUGIN_DIR/systemd/$f"; } >"$tmp"
     mv -f "$tmp" "$target"
     echo "  wrote ~${UNIT_DIR#"$HOME"}/$f"
   done
@@ -69,6 +84,11 @@ install_units() {
     echo "Enabled: grok-bot.service (supervisor); auto-update: off (kept your choice)"
   else
     echo "Enabled: grok-bot.service (supervisor) + grok-bot-update.timer (daily)"
+  fi
+  if [[ "$update_verify" == "unpinned-ok" ]]; then
+    echo "Update integrity: unpinned-ok (you opted in; new releases install on first sight)"
+  else
+    echo "Update integrity: strict (fail-closed; pin new releases with grokbot-update.sh pin <version>)"
   fi
 }
 
@@ -145,12 +165,23 @@ uninstall() {
   echo "Launcher shim left in place; restore from ~${SHIM#"$HOME"}.bak.* or remove it manually."
 }
 
-case "${1:-}" in
-  "") install_units ;;
-  --with-launcher) install_units && install_shim ;;
-  --uninstall) uninstall ;;
-  *)
-    echo "usage: $0 [--with-launcher | --uninstall]" >&2
-    exit 2
-    ;;
-esac
+ALLOW_UNPINNED_UPDATES=false
+WITH_LAUNCHER=false
+for arg in "$@"; do
+  case "$arg" in
+    --allow-unpinned-updates) ALLOW_UNPINNED_UPDATES=true ;;
+    --with-launcher) WITH_LAUNCHER=true ;;
+    --uninstall) uninstall; exit 0 ;;
+    *)
+      echo "usage: $0 [--with-launcher] [--allow-unpinned-updates] | --uninstall" >&2
+      echo "  --allow-unpinned-updates  opt into installing releases without a" >&2
+      echo "                            checksums.txt pin (TOFU; less strict)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+install_units
+if [[ "$WITH_LAUNCHER" == true ]]; then
+  install_shim
+fi
